@@ -1,0 +1,45 @@
+2025-06-14 01:24:31.978 [warning] Dir "/home/t_miguel1217/.pixi/envs" is not watchable (directory does not exist)
+2025-06-14 01:24:31.978 [info] Starting Environment refresh
+2025-06-14 01:24:31.978 [info] Searching for interpreters in posix paths locator
+2025-06-14 01:24:31.978 [info] Searching for pyenv environments
+2025-06-14 01:24:31.978 [info] Searching for conda environments
+2025-06-14 01:24:31.978 [info] Searching for global virtual environments
+2025-06-14 01:24:31.978 [info] Searching for custom virtual environments
+2025-06-14 01:24:31.978 [info] pyenv is not installed
+2025-06-14 01:24:31.978 [info] Finished searching for pyenv environments: 28 milliseconds
+2025-06-14 01:24:31.978 [info] Finished searching for custom virtual envs: 26 milliseconds
+2025-06-14 01:24:31.978 [info] > conda info --json
+2025-06-14 01:24:31.978 [info] > hatch env show --json
+2025-06-14 01:24:31.978 [info] cwd: .
+2025-06-14 01:24:31.978 [info] > pyenv which python
+2025-06-14 01:24:31.978 [info] cwd: .
+2025-06-14 01:24:31.978 [info] Finished searching for global virtual envs: 58 milliseconds
+2025-06-14 01:24:31.979 [info] Found: /bin/python --> /bin/python3.12
+2025-06-14 01:24:31.981 [info] Found: /bin/python3 --> /bin/python3.12
+2025-06-14 01:24:31.982 [info] Found: /bin/python3.12 --> /bin/python3.12
+2025-06-14 01:24:32.005 [info] Found: /usr/bin/python --> /usr/bin/python3.12
+2025-06-14 01:24:32.005 [info] Found: /usr/bin/python3 --> /usr/bin/python3.12
+2025-06-14 01:24:32.005 [info] Found: /usr/bin/python3.12 --> /usr/bin/python3.12
+2025-06-14 01:24:32.044 [info] Finished searching for interpreters in posix paths locator: 137 milliseconds
+2025-06-14 01:24:32.044 [info] > /bin/python -I /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/get_output_via_markers.py /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/interpreterInfo.py
+2025-06-14 01:24:32.065 [info] > /usr/bin/python -I /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/get_output_via_markers.py /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/interpreterInfo.py
+2025-06-14 01:24:32.065 [info] Environments refresh paths discovered (event): 163 milliseconds
+2025-06-14 01:24:32.065 [info] Environments refresh paths discovered: 163 milliseconds
+2025-06-14 01:24:32.116 [info] Environments refresh finished (event): 214 milliseconds
+2025-06-14 01:24:32.128 [info] Environment refresh took 226 milliseconds
+2025-06-14 01:24:32.134 [info] Python interpreter path: /bin/python
+2025-06-14 01:24:34.242 [info] Starting Jedi language server for t_miguel1217.
+2025-06-14 01:24:47.071 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:24:52.985 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:29:59.328 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:00.980 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:04.298 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:07.851 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:10.209 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:11.997 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:15.601 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:18.298 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:24.422 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:52.018 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:30:55.005 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
+2025-06-14 01:31:06.214 [info] Discover tests for workspace name: t_miguel1217 - uri: /home/t_miguel1217/embed.py
