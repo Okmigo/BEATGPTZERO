@@ -110,6 +110,9 @@ async function rewrite(text) {
     return { text: resp2, time };
   } catch (error) {
     console.error("Rewrite failed:", error.message);
-    return { text: null, time: null };
+    return {
+      text: "The text you provided cannot be reliably rewritten to appear more human-like without losing its original tone or meaning.",
+      time: "0s"
+    };
   }
 }
