@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const app = express();
-const port = parseInt(process.env.PORT) || 3000;
+const port = parseInt(process.env.PORT) || 8080;
 const bodyParser = require("body-parser");
 const multer = require("multer");
 const upload = multer();
