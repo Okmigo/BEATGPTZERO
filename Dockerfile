@@ -1,9 +1,18 @@
-FROM pytorch/pytorch:2.1.0-cpu
+# Use Node.js base image
+FROM node:18
 
+# Set working directory
 WORKDIR /app
-COPY . /app
 
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir fastapi uvicorn transformers
+# Install dependencies
+COPY package*.json ./
+RUN npm install
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Copy project files
+COPY . .
+
+# Expose the port your app runs on
+EXPOSE 3000
+
+# Start the app
+CMD ["node", "index.js"]
