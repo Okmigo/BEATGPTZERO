@@ -57,6 +57,24 @@ app.get("/logo.png", async function (req, res) {
   res.sendFile(path.join(__dirname, `/views/logo.png`));
 });
 
+app.post("/analyze", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "Missing 'text' in body" });
+
+    // Simple echo or dummy logic — replace with real analysis logic
+    const response = {
+      original: text,
+      rewritten: text.split(" ").reverse().join(" "), // Dummy reversal logic
+      bypassable: true
+    };
+
+    res.json(response);
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error", details: err.message });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Example app listening at http://localhost:${port}`);
 });
