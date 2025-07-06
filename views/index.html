@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>GPT Negative</title>
+	<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7/jquery.js"></script>
+	<script src="https://malsup.github.io/jquery.form.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+	<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+	<link rel="stylesheet" href="/style.css" />
+	<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+	<link rel="icon" type="image/x-icon" href="/favicon.ico">
+	
+
+</head>
+
+<body>
+	<center><img src="/logo.png" alt="Logo" height="30%" width="30%"></center>
+	<form id="form" class="topBefore">
+		<textarea id="message" type="text" placeholder="Enter your text here"></textarea>
+		<input id="submit" type="submit" value="Submit!">
+	</form>
+
+
+	<center>
+		<div id="timetaken">placeholder</div>
+		<div id="output">loading...</div>
+		<br>
+		<button id="ctc" onclick="ctc()">Copy to Clipboard</button>
+	</center>
+
+	<footer> Made by <a href="https://joabutt.dev">Joabutt</a> • <a href="https://github.com/Joabutt/gptnegative">Disclamer</a> • <a href="/about">About</a> • <a href="https://aww0upmop82.typeform.com/to/g1V9UmXz">Feedback</a></footer>
+	<script>
+		document.getElementById('output').style.display = "none";
+		document.getElementById('ctc').style.display = "none";
+		document.getElementById('timetaken').style.display = "none";
+		function ctc() {
+			// Get the text field
+			const copyText = document.createElement('textarea');
+			document.body.appendChild(copyText);
+			const div = document.getElementById("output")
+			copyText.value = div.innerText;
+			// Select the text field
+			copyText.select();
+			copyText.setSelectionRange(0, 99999); // For mobile devices
+
+			// Copy the text inside the text field
+			document.execCommand('copy');
+
+			// Alert the copied text
+			Toastify({
+				text: "🚀 Copied to clipboard!",
+				gravity: "top",
+				position: "center",
+				style: {
+					background: "#e2dedb"
+				}
+			}).showToast();
+
+			document.body.removeChild(copyText);
+		}
+
+
+		$(document).ready(function () {
+
+			$('#form').submit(async function (event) {
+				// prevent the form from submitting normally
+				const div = document.getElementById('output');
+				const btn = document.getElementById('ctc');
+				const ttk = document.getElementById('timetaken');
+				event.preventDefault();
+				// get the input text from the textarea
+				div.style.display = "block"
+
+				var dainputText = $('#message').val();
+				const inputText = JSON.stringify(dainputText).replace(/(\r\n|\n|\r)/gm, "");
+				// call the URL with the input text as a parameter
+				div.innerHTML = "loading... (Average generation time is ~15s)";
+				const results = await axios.post("/api", {
+					text: inputText
+				})
+				btn.style.display = 'block'
+				ttk.style.display = 'block'
+				ttk.innerHTML = "Generation time: " + results.data.time
+				const preresult1 = results.data.text.replaceAll('"', "");
+				const preresult2 = preresult1.replaceAll("\\n\\n", " ");
+				const finalresult = preresult2.trim()
+				div.innerHTML = finalresult
+			})
+
+
+		});
+	</script>
+</body>
+
+</html>
