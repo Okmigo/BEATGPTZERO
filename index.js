@@ -64,16 +64,19 @@ app.post("/analyze", async (req, res) => {
     if (!text) return res.status(400).json({ error: "Missing 'text' in body" });
 
     const rewrittenResult = await rewrite(text);
+    console.log("REWRITTEN TEXT:", rewrittenResult);
 
     res.json({
       original: text,
-      rewritten: rewrittenResult.text,
-      bypassable: true
+      rewritten: rewrittenResult?.text || "[Rewrite failed]",
+      bypassable: !!rewrittenResult?.text
     });
   } catch (err) {
+    console.error("Error in /analyze:", err.message);
     res.status(500).json({ error: "Internal server error", details: err.message });
   }
 });
+
 
 app.listen(port, () => {
   console.log(`Example app listening at http://localhost:${port}`);
