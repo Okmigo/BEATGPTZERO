@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "BeatGPTZero API",
+  "name_for_model": "beatgptzero",
+  "description_for_human": "Analyze text for AI writing detection.",
+  "description_for_model": "API to check if input text is AI-generated.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://beatgptzero-api-21044677645.us-east1.run.app/openapi.yaml"
+  },
+  "logo_url": "https://beatgptzero-api-21044677645.us-east1.run.app/logo.png",
+  "contact_email": "support@yourdomain.com",
+  "legal_info_url": "https://yourdomain.com/legal"
+}
