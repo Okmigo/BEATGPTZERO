@@ -1,18 +1,15 @@
 // index.js
 require("dotenv").config();
 const express = require("express");
-const axios = require("axios");
-const app = express();
-const port = parseInt(process.env.PORT) || 8080;
 const bodyParser = require("body-parser");
 const multer = require("multer");
-const upload = multer();
 const path = require("path");
+const { spawn } = require("child_process");
 
-let text;
-let resp;
-let time;
+const app = express();
+const port = parseInt(process.env.PORT) || 8080;
 
+const upload = multer();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(upload.array());
@@ -30,11 +27,6 @@ app.get("/about", (req, res) => {
   res.sendFile(path.join(__dirname, "/views/about.html"));
 });
 
-app.get("/test", async (req, res) => {
-  const preeverfinal = await rewrite("This is a sample test string for rewrite function.");
-  res.send(preeverfinal);
-});
-
 app.get("/font", (req, res) => {
   res.sendFile(path.join(__dirname, "/views/fonts/boxy-bold.ttf"));
 });
@@ -50,9 +42,8 @@ app.get("/logo.png", (req, res) => {
 app.post("/api", async (req, res) => {
   const pretext = req.body.text;
   const posttext = pretext.replace(/(\r\n|\n|\r)/gm, "");
-  text = posttext;
-  const preeverfinal = await rewrite(text);
-  res.send(preeverfinal);
+  const result = await rewrite(posttext);
+  res.send(result);
 });
 
 app.post("/analyze", async (req, res) => {
@@ -73,42 +64,25 @@ app.post("/analyze", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`✅ Server running at http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
 
+// Local rewrite using a child process to execute Python logic (free and private)
 async function rewrite(text) {
-  console.log("🌀 Starting rewrite for:", text);
-  const start = Date.now();
+  return new Promise((resolve) => {
+    const py = spawn("python3", ["./rewriter.py", text]);
+    let data = "";
 
-  try {
-    const result = await axios.post("https://api.openai.com/v1/chat/completions", {
-      model: "gpt-4-turbo",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an expert human writer. Rewrite the input to sound natural, original, and human-written. Avoid common AI phrasing. Keep meaning intact."
-        },
-        {
-          role: "user",
-          content: text
-        }
-      ],
-      temperature: 0.85,
-      max_tokens: 2048
-    }, {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      }
+    py.stdout.on("data", (chunk) => {
+      data += chunk.toString();
     });
 
-    const rewritten = result.data.choices[0].message.content.trim();
-    const duration = ((Date.now() - start) / 1000).toFixed(2) + "s";
-    console.log("✅ Rewrite complete in", duration);
-    return { text: rewritten, time: duration };
-  } catch (err) {
-    console.error("❌ Rewrite failed:", err.message);
-    return { text: null, time: null };
-  }
+    py.stderr.on("data", (err) => {
+      console.error("Python error:", err.toString());
+    });
+
+    py.on("close", () => {
+      resolve({ text: data.trim(), time: null });
+    });
+  });
 }
