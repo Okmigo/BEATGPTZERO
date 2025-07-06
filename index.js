@@ -1,118 +1,98 @@
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
-const app = express();
-const port = parseInt(process.env.PORT) || 8080;
 const bodyParser = require("body-parser");
 const multer = require("multer");
-const upload = multer();
 const path = require("path");
 
-let text;
-let resp;
-let time;
+const app = express();
+const port = parseInt(process.env.PORT) || 8080;
+const upload = multer();
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(upload.array());
 app.use(express.static("public"));
 
-app.get("/style.css", (req, res) => {
-  res.sendFile(path.join(__dirname, "/views/style.css"));
-});
-
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "/views/index.html"));
-});
-
-app.get("/about", (req, res) => {
-  res.sendFile(path.join(__dirname, "/views/about.html"));
-});
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "/views/index.html")));
+app.get("/about", (req, res) => res.sendFile(path.join(__dirname, "/views/about.html")));
+app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "/views/style.css")));
+app.get("/font", (req, res) => res.sendFile(path.join(__dirname, "/views/fonts/boxy-bold.ttf")));
+app.get("/favicon.ico", (req, res) => res.sendFile(path.join(__dirname, "/views/favicon.ico")));
+app.get("/logo.png", (req, res) => res.sendFile(path.join(__dirname, "/views/logo.png")));
 
 app.get("/test", async (req, res) => {
-  const preeverfinal = await rewrite("This is a sample test string for rewrite function.");
-  res.send(preeverfinal);
-});
-
-app.get("/font", (req, res) => {
-  res.sendFile(path.join(__dirname, "/views/fonts/boxy-bold.ttf"));
-});
-
-app.get("/favicon.ico", (req, res) => {
-  res.sendFile(path.join(__dirname, "/views/favicon.ico"));
-});
-
-app.get("/logo.png", (req, res) => {
-  res.sendFile(path.join(__dirname, "/views/logo.png"));
+  const rewritten = await rewrite("This is a sample test string.");
+  res.json(rewritten);
 });
 
 app.post("/api", async (req, res) => {
-  const pretext = req.body.text;
-  const posttext = pretext.replace(/(\r\n|\n|\r)/gm, "");
-  text = posttext;
-  const preeverfinal = await rewrite(text);
-  res.send(preeverfinal);
+  const input = req.body.text?.replace(/(\r\n|\n|\r)/gm, "") || "";
+  const rewritten = await rewrite(input);
+  res.json(rewritten);
 });
 
 app.post("/analyze", async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "Missing 'text' in body" });
+  const { text } = req.body;
 
-    const rewrittenResult = await rewrite(text);
-
-    res.json({
-      original: text,
-      rewritten: rewrittenResult.text,
-      bypassable: !!rewrittenResult.text
-    });
-  } catch (err) {
-    res.status(500).json({ error: "Internal server error", details: err.message });
+  if (!text || text.trim() === "") {
+    return res.status(400).json({ error: "Missing 'text' in request body." });
   }
+
+  const result = await rewrite(text);
+
+  if (!result.text) {
+    return res.status(500).json({
+      original: text,
+      rewritten: null,
+      bypassable: false,
+      error: "Rewrite failed or returned no result",
+    });
+  }
+
+  res.json({
+    original: text,
+    rewritten: result.text,
+    bypassable: true,
+    time: result.time,
+  });
 });
 
 app.listen(port, () => {
-  console.log(`Example app listening at http://localhost:${port}`);
+  console.log(`✅ Server running at http://localhost:${port}`);
 });
 
-async function rewrite(text) {
-  console.log("Starting rewrite for:", text);
+// 🌀 Rewrite logic using chained spinbot APIs
+async function rewrite(inputText) {
   const start = Date.now();
 
   try {
-    const first = await axios.post("https://api.spinbot.com/spin/rewrite-text", {
-      text: text,
-      x_spin_cap_words: false,
-    }, {
-      headers: {
-        Origin: "https://spinbot.com",
-        "Content-Type": "application/json",
+    const spin1 = await axios.post(
+      "https://api.spinbot.com/spin/rewrite-text",
+      { text: inputText, x_spin_cap_words: false },
+      {
+        headers: {
+          Origin: "https://spinbot.com",
+          "Content-Type": "application/json",
+        },
       }
-    });
+    );
 
-    const resp1 = first.data;
-    console.log("First Spinbot response:", resp1);
-
-    const second = await axios.post("https://backend-spinbot-wrapper-prod.azurewebsites.net/spin/rewrite-text", {
-      text: resp1,
-      x_spin_cap_words: false,
-    }, {
-      headers: {
-        Origin: "https://free-article-spinner.com",
-        "Content-Type": "application/json",
+    const spin2 = await axios.post(
+      "https://backend-spinbot-wrapper-prod.azurewebsites.net/spin/rewrite-text",
+      { text: spin1.data, x_spin_cap_words: false },
+      {
+        headers: {
+          Origin: "https://free-article-spinner.com",
+          "Content-Type": "application/json",
+        },
       }
-    });
+    );
 
-    const resp2 = second.data;
-    const time = ((Date.now() - start) / 1000).toFixed(2) + "s";
-    console.log("Final rewrite:", resp2, "Time taken:", time);
-
-    return { text: resp2, time };
-  } catch (error) {
-    console.error("Rewrite failed:", error.message);
-    return {
-      text: "The text you provided cannot be reliably rewritten to appear more human-like without losing its original tone or meaning.",
-      time: "0s"
-    };
+    const duration = ((Date.now() - start) / 1000).toFixed(2) + "s";
+    return { text: spin2.data, time: duration };
+  } catch (err) {
+    console.error("❌ Rewrite failed:", err.message);
+    return { text: null, time: null };
   }
 }
