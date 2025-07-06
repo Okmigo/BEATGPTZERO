@@ -1,3 +1,4 @@
+// index.js
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
@@ -64,8 +65,7 @@ app.post("/analyze", async (req, res) => {
     res.json({
       original: text,
       rewritten: rewrittenResult.text,
-      bypassable: !!rewrittenResult.text,
-      error: rewrittenResult.text ? null : "Rewrite failed or returned no result"
+      bypassable: !!rewrittenResult.text
     });
   } catch (err) {
     res.status(500).json({ error: "Internal server error", details: err.message });
@@ -73,44 +73,42 @@ app.post("/analyze", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Example app listening at http://localhost:${port}`);
+  console.log(`✅ Server running at http://localhost:${port}`);
 });
 
 async function rewrite(text) {
-  console.log("Starting rewrite for:", text);
+  console.log("🌀 Starting rewrite for:", text);
   const start = Date.now();
 
   try {
-    const first = await axios.post("https://api.spinbot.com/spin/rewrite-text", {
-      text,
-      x_spin_cap_words: false,
+    const result = await axios.post("https://api.openai.com/v1/chat/completions", {
+      model: "gpt-4-turbo",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an expert human writer. Rewrite the input to sound natural, original, and human-written. Avoid common AI phrasing. Keep meaning intact."
+        },
+        {
+          role: "user",
+          content: text
+        }
+      ],
+      temperature: 0.85,
+      max_tokens: 2048
     }, {
       headers: {
-        Origin: "https://spinbot.com",
-        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
       }
     });
 
-    const resp1 = first.data;
-    console.log("First Spinbot response:", resp1);
-
-    const second = await axios.post("https://backend-spinbot-wrapper-prod.azurewebsites.net/spin/rewrite-text", {
-      text: resp1,
-      x_spin_cap_words: false,
-    }, {
-      headers: {
-        Origin: "https://free-article-spinner.com",
-        "Content-Type": "application/json",
-      }
-    });
-
-    const resp2 = second.data;
-    const time = ((Date.now() - start) / 1000).toFixed(2) + "s";
-    console.log("Final rewrite:", resp2);
-
-    return { text: resp2, time };
-  } catch (error) {
-    console.error("\u274C Rewrite failed:", error.response?.data || error.message);
+    const rewritten = result.data.choices[0].message.content.trim();
+    const duration = ((Date.now() - start) / 1000).toFixed(2) + "s";
+    console.log("✅ Rewrite complete in", duration);
+    return { text: rewritten, time: duration };
+  } catch (err) {
+    console.error("❌ Rewrite failed:", err.message);
     return { text: null, time: null };
   }
 }
