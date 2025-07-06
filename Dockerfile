@@ -1,21 +1,19 @@
-# Use official Node.js LTS image
+# Use Node.js base image
 FROM node:18
 
-# Create app directory
+# Set working directory
 WORKDIR /app
 
-# Copy package.json and install dependencies
+# Copy package files and install dependencies
 COPY package*.json ./
 RUN npm install
 
-# Copy entire project (React + Express)
+# Copy all app source
 COPY . .
 
-# Build the React app
-RUN npm run build
+# Expose Cloud Run port
+ENV PORT=3000
+EXPOSE 3000
 
-# Expose port
-EXPOSE 8080
-
-# Start the server
-CMD [ "node", "server.js" ]
+# Start app
+CMD ["node", "index.js"]
