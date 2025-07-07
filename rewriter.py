@@ -3,7 +3,12 @@ import torch
 import random
 
 # Load quantized paraphrasing model
-tokenizer = AutoTokenizer.from_pretrained("prithivida/parrot_paraphraser_on_T5")
+tokenizer = AutoTokenizer.from_pretrained(
+    "prithivida/parrot_paraphraser_on_T5",
+    cache_dir="./hf_cache",
+    local_files_only=False
+)
+
 model = AutoModelForSeq2SeqLM.from_pretrained("prithivida/parrot_paraphraser_on_T5")
 
 paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=-1)
