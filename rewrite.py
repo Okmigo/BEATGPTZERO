@@ -12,7 +12,7 @@ async def analyze(request: Request):
     return {
         "original": input_text,
         "rewritten": rewritten,
-        "bypassable": bool(rewritten)
+        "bypassable": bool(rewritten and "[Rewrite Error]" not in rewritten)
     }
 
 if __name__ == "__main__":
