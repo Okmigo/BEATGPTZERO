@@ -6,4 +6,4 @@ flask
 flask-cors
 fastapi
 uvicorn
-
+sacremoses
