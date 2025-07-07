@@ -4,3 +4,6 @@ torch
 sentencepiece
 flask
 flask-cors
+fastapi
+uvicorn
+
