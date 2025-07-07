@@ -1,24 +1,19 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from rewrite import rewrite_text
+from fastapi import FastAPI, Request
+import uvicorn
+from rewriter import rewrite_text
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI()
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
-    data = request.json
-    original = data.get("text", "")
-    if not original:
-        return jsonify({"error": "Missing 'text'"}), 400
-
-    # Use the advanced paraphrasing function
-    rewritten = rewrite_text(original)
-    return jsonify({
-        "original": original,
+@app.post("/analyze")
+async def analyze(request: Request):
+    data = await request.json()
+    input_text = data.get("text", "")
+    rewritten = rewrite_text(input_text)
+    return {
+        "original": input_text,
         "rewritten": rewritten,
         "bypassable": bool(rewritten)
-    })
+    }
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    uvicorn.run("rewrite:app", host="0.0.0.0", port=3000)
