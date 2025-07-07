@@ -1,17 +1,18 @@
 {
   "schema_version": "v1",
-  "name_for_human": "BeatGPTZero API",
+  "name_for_human": "BeatGPTZero",
   "name_for_model": "beatgptzero",
-  "description_for_human": "Analyze text for AI writing detection.",
-  "description_for_model": "API to check if input text is AI-generated.",
+  "description_for_human": "Rewrite text to bypass AI detectors like GPTZero using paraphrasing and back-translation.",
+  "description_for_model": "An API that rewrites and paraphrases user-submitted text to increase the likelihood of bypassing AI detectors like GPTZero. Call the /analyze endpoint with a 'text' parameter.",
   "auth": {
     "type": "none"
   },
   "api": {
     "type": "openapi",
-    "url": "https://beatgptzero-api-21044677645.us-east1.run.app/openapi.yaml"
+    "url": "https://beatgptzero-api-21044677645.us-east1.run.app/openapi.yaml",
+    "is_user_authenticated": false
   },
   "logo_url": "https://beatgptzero-api-21044677645.us-east1.run.app/logo.png",
-  "contact_email": "support@yourdomain.com",
-  "legal_info_url": "https://yourdomain.com/legal"
+  "contact_email": "support@beatgptzero.com",
+  "legal_info_url": "https://beatgptzero-api-21044677645.us-east1.run.app/legal"
 }
