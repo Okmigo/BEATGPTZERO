@@ -1,85 +1,68 @@
-# File: rewrite.py
+# rewrite.py
 
-from fastapi import APIRouter, Request
-from pydantic import BaseModel
-from .rewriter import Rewriter
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
 import random
 import re
+import nltk
+nltk.download('punkt')
+from nltk.tokenize import sent_tokenize
 
-router = APIRouter()
-rewriter = Rewriter()
+# Load paraphrasing model
+model_name = "prithivida/parrot_paraphraser_on_T5"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+model.eval()
 
-class RewriteRequest(BaseModel):
-    text: str
+if torch.cuda.is_available():
+    model = model.to("cuda")
 
-class RewriteResponse(BaseModel):
-    original: str
-    rewritten: str
-    bypassable: bool
-    error: str = None
+def sample_paraphrase(text: str, max_length=256) -> str:
+    input_ids = tokenizer.encode(f"paraphrase: {text} </s>", return_tensors="pt")
+    if torch.cuda.is_available():
+        input_ids = input_ids.to("cuda")
 
-def inject_variation(text):
-    text = re.sub(r"\bis not\b", "isn't", text)
-    text = re.sub(r"\bdoes not\b", "doesn't", text)
-    text = re.sub(r"\bcannot\b", "can't", text)
-    text = re.sub(r"\bit is\b", "it's", text)
-    text = re.sub(r"\bthat is\b", "that's", text)
-    text = re.sub(r"\bthey are\b", "they're", text)
-    if random.random() < 0.5:
-        text += random.choice([
-            " You know what I mean?",
-            " At the end of the day, that's what matters.",
-            " Right?",
-            " That's the tricky part, isn't it?",
-            " Anyway, it’s something to think about.",
-            " Honestly, that's how it usually plays out."
-        ])
-    return text
+    outputs = model.generate(
+        input_ids=input_ids,
+        max_length=max_length,
+        do_sample=True,
+        top_k=50,
+        top_p=0.9,
+        temperature=0.9,
+        num_return_sequences=1
+    )
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-def vary_sentence_length(text):
-    sentences = re.split(r'(?<=[.!?]) +', text)
-    output = []
-    for sentence in sentences:
-        if len(sentence.split()) > 18 and random.random() < 0.4:
-            parts = re.split(r'[;,]', sentence)
-            if len(parts) > 1:
-                output.extend([p.strip().capitalize() + '.' for p in parts if p.strip()])
-            else:
-                output.append(sentence)
-        elif len(sentence.split()) < 8 and random.random() < 0.3 and len(output) > 0:
-            output[-1] += ' ' + sentence.lower()
-        else:
-            output.append(sentence)
-    return ' '.join(output)
+def inject_human_style(text: str) -> str:
+    contractions = {
+        "it is": "it's", "do not": "don't", "cannot": "can't",
+        "you are": "you're", "they will": "they'll"
+    }
+    fillers = ["you know", "honestly", "anyway", "at the end of the day"]
+    asides = ["but is it really?", "just saying.", "think about it."]
 
-def reorder_clauses(text):
-    clauses = re.split(r'(?<=[,;])\s+', text)
-    random.shuffle(clauses)
-    return ' '.join(clauses)
+    for full, short in contractions.items():
+        text = re.sub(rf"\b{full}\b", short, text, flags=re.IGNORECASE)
 
-def add_rhetorical_devices(text):
-    questions = [
-        "But is it really that simple?",
-        "Don't we all see this happening already?",
-        "What does that say about our priorities?",
-        "Is that really the best we can do?"
-    ]
-    if random.random() < 0.3:
-        insertion = random.choice(questions)
-        sentences = re.split(r'(?<=[.!?]) +', text)
-        idx = random.randint(0, len(sentences))
-        sentences.insert(idx, insertion)
-        text = ' '.join(sentences)
-    return text
+    sentences = sent_tokenize(text)
+    for i in range(len(sentences)):
+        if random.random() < 0.25:
+            sentences[i] = f"{random.choice(fillers).capitalize()}, {sentences[i]}"
+        if random.random() < 0.2:
+            sentences[i] += f" {random.choice(asides)}"
 
-@router.post("/analyze", response_model=RewriteResponse)
-async def analyze(req: RewriteRequest):
+    return " ".join(sentences)
+
+def restructure_sentences(text: str) -> str:
+    sentences = sent_tokenize(text)
+    random.shuffle(sentences)
+    return " ".join(sentences)
+
+def rewrite_text(text: str) -> str:
     try:
-        rewritten = rewriter.rewrite(req.text, decoding="sampling")
-        rewritten = reorder_clauses(rewritten)
-        rewritten = inject_variation(rewritten)
-        rewritten = add_rhetorical_devices(rewritten)
-        rewritten = vary_sentence_length(rewritten)
-        return RewriteResponse(original=req.text, rewritten=rewritten, bypassable=True)
+        base = sample_paraphrase(text)
+        shuffled = restructure_sentences(base)
+        humanized = inject_human_style(shuffled)
+        return humanized
     except Exception as e:
-        return RewriteResponse(original=req.text, rewritten=None, bypassable=False, error=str(e))
+        return f"[Rewrite Error]: {e}"
