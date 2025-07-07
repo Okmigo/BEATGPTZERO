@@ -1,44 +1,47 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import random
+# File: rewriter.py
 
-app = Flask(__name__)
-CORS(app)
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
-    data = request.json
-    original = data.get("text", "")
-    if not original:
-        return jsonify({"error": "Missing 'text'"}), 400
+class Rewriter:
+    def __init__(self):
+        self.tokenizer = AutoTokenizer.from_pretrained("Vamsi/T5_Paraphrase_Paws")
+        self.model = AutoModelForSeq2SeqLM.from_pretrained("Vamsi/T5_Paraphrase_Paws")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = self.model.to(self.device)
 
-    rewritten = rewrite(original)
-    return jsonify({
-        "original": original,
-        "rewritten": rewritten,
-        "bypassable": bool(rewritten)
-    })
+    def rewrite(self, text, decoding="sampling"):
+        # Prepare input with prompt
+        input_text = f"paraphrase: {text} </s>"
+        encoding = self.tokenizer.encode_plus(
+            input_text,
+            padding='max_length',
+            max_length=256,
+            return_tensors="pt",
+            truncation=True
+        ).to(self.device)
 
-def rewrite(text):
-    words = text.split()
-    if len(words) < 5:
-        return None  # avoid nonsense rewrites
+        # Decoding options
+        if decoding == "sampling":
+            outputs = self.model.generate(
+                input_ids=encoding['input_ids'],
+                attention_mask=encoding['attention_mask'],
+                max_length=256,
+                do_sample=True,
+                top_p=0.9,
+                temperature=0.9,
+                num_return_sequences=1
+            )
+        elif decoding == "beam":
+            outputs = self.model.generate(
+                input_ids=encoding['input_ids'],
+                attention_mask=encoding['attention_mask'],
+                max_length=256,
+                num_beams=5,
+                early_stopping=True
+            )
+        else:
+            raise ValueError("Unsupported decoding strategy")
 
-    # Synonym-like substitution and mild scrambling
-    substitutions = {
-        "technology": "tech",
-        "sustainability": "eco-focus",
-        "data": "information",
-        "innovation": "advancement",
-        "global": "worldwide",
-        "resources": "assets",
-        "challenge": "difficulty",
-    }
-
-    new_words = [substitutions.get(w.lower(), w) for w in words]
-    random.shuffle(new_words[:max(1, len(new_words)//3)])
-
-    return " ".join(new_words)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+        paraphrased = self.tokenizer.decode(outputs[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        return paraphrased
