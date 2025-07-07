@@ -1,16 +1,24 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from rewrite import rewrite_text
 
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-import torch
+app = Flask(__name__)
+CORS(app)
 
-# Load quantized paraphrasing model
-tokenizer = AutoTokenizer.from_pretrained("prithivida/parrot_paraphraser_on_T5")
-model = AutoModelForSeq2SeqLM.from_pretrained("prithivida/parrot_paraphraser_on_T5")
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    data = request.json
+    original = data.get("text", "")
+    if not original:
+        return jsonify({"error": "Missing 'text'"}), 400
 
-paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=-1)
+    # Use the advanced paraphrasing function
+    rewritten = rewrite_text(original)
+    return jsonify({
+        "original": original,
+        "rewritten": rewritten,
+        "bypassable": bool(rewritten)
+    })
 
-def rewrite_text(text: str) -> str:
-    try:
-        outputs = paraphraser(f"paraphrase: {text} </s>", max_length=256, do_sample=True, top_k=120, top_p=0.98, temperature=0.7)
-        return outputs[0]["generated_text"]
-    except Exception as e:
-        return f"[Rewrite Error]: {e}"
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
