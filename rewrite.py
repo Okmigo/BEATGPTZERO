@@ -5,6 +5,10 @@ import random
 import nltk
 from nltk.tokenize import sent_tokenize
 import threading
+import os
+
+# Force offline mode to prevent network requests
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 # Download nltk punkt for sentence tokenization
 nltk.download('punkt', quiet=True)
@@ -43,11 +47,12 @@ def load_model():
     with load_lock:
         if not model_loaded:
             try:
-                # Load model from cache
+                # Load model from local cache
                 tokenizer = AutoTokenizer.from_pretrained("prithivida/parrot_paraphraser_on_T5")
                 model = AutoModelForSeq2SeqLM.from_pretrained("prithivida/parrot_paraphraser_on_T5")
-                paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=-1)
+                paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
                 model_loaded = True
+                print("Model loaded successfully")
             except Exception as e:
                 print(f"Model loading failed: {e}")
 
@@ -116,6 +121,8 @@ def rewrite_text(text: str, num_candidates: int = 3) -> str:
         # Load model if needed
         if not model_loaded:
             load_model()
+            if not model_loaded:
+                return "[Rewrite Error]: Model not loaded"
         
         # Generate paraphrases
         paraphrases = paraphraser(
