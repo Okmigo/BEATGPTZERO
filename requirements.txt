@@ -1,9 +1,6 @@
-protobuf==3.20.3
-transformers
-torch
-sentencepiece
 flask
 flask-cors
-fastapi
-uvicorn
-sacremoses
+transformers
+torch
+nltk
+sentencepiece
