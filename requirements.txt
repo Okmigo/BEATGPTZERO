@@ -4,3 +4,4 @@ transformers
 torch
 nltk
 sentencepiece
+protobuf==3.20.3  # Required for tokenizer conversion
