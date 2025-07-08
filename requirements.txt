@@ -1,8 +1,4 @@
-flask
-flask-cors
-transformers
-torch
-nltk
-sentencepiece
-protobuf==3.20.3
+Flask==3.0.0
+nltk==3.8.1
 gunicorn==21.2.0
+requests==2.31.0
