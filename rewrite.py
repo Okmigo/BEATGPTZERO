@@ -6,6 +6,7 @@ import nltk
 from nltk.tokenize import sent_tokenize
 import threading
 import os
+import time
 
 # Force offline mode to prevent network requests
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -15,6 +16,7 @@ nltk.download('punkt', quiet=True)
 
 # Model loading status
 model_loaded = False
+model_loading_started = 0
 load_lock = threading.Lock()
 paraphraser = None
 
@@ -40,21 +42,43 @@ TRANSITION_WORDS = [
 
 def load_model():
     """Load model in a thread-safe manner"""
-    global model_loaded, paraphraser
+    global model_loaded, paraphraser, model_loading_started
     if model_loaded:
         return
+    
+    model_loading_started = time.time()
+    print(f"Model loading started at {model_loading_started}")
     
     with load_lock:
         if not model_loaded:
             try:
-                # Load model from local cache
+                print("Loading tokenizer...")
                 tokenizer = AutoTokenizer.from_pretrained("prithivida/parrot_paraphraser_on_T5")
+                
+                print("Loading model...")
                 model = AutoModelForSeq2SeqLM.from_pretrained("prithivida/parrot_paraphraser_on_T5")
-                paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
+                
+                print("Creating pipeline...")
+                paraphraser = pipeline(
+                    "text2text-generation", 
+                    model=model, 
+                    tokenizer=tokenizer,
+                    device=0 if torch.cuda.is_available() else -1
+                )
+                
                 model_loaded = True
-                print("Model loaded successfully")
+                load_time = time.time() - model_loading_started
+                print(f"Model loaded successfully in {load_time:.2f} seconds")
             except Exception as e:
                 print(f"Model loading failed: {e}")
+                # Attempt graceful degradation
+                try:
+                    # Try simpler pipeline without device specification
+                    paraphraser = pipeline("text2text-generation", model="prithivida/parrot_paraphraser_on_T5")
+                    model_loaded = True
+                    print("Model loaded with fallback method")
+                except Exception as fallback_e:
+                    print(f"Fallback loading also failed: {fallback_e}")
 
 def humanize_text(text: str) -> str:
     """Add human-like features to text"""
@@ -122,7 +146,7 @@ def rewrite_text(text: str, num_candidates: int = 3) -> str:
         if not model_loaded:
             load_model()
             if not model_loaded:
-                return "[Rewrite Error]: Model not loaded"
+                return "[Rewrite Error]: Model not loaded - please try again later"
         
         # Generate paraphrases
         paraphrases = paraphraser(
