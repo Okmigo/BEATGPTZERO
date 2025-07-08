@@ -40,4 +40,100 @@ def load_model():
     if model_loaded:
         return
     
-    with load_loc
+    with load_lock:
+        if not model_loaded:
+            try:
+                # Load model from cache
+                tokenizer = AutoTokenizer.from_pretrained("prithivida/parrot_paraphraser_on_T5")
+                model = AutoModelForSeq2SeqLM.from_pretrained("prithivida/parrot_paraphraser_on_T5")
+                paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=-1)
+                model_loaded = True
+            except Exception as e:
+                print(f"Model loading failed: {e}")
+
+def humanize_text(text: str) -> str:
+    """Add human-like features to text"""
+    # Add colloquialisms
+    if random.random() > 0.7 and len(text.split()) > 10:
+        colloquial = random.choice(COLLOQUIALISMS)
+        text = f"{colloquial}, {text[0].lower()}{text[1:]}"
+    
+    # Use contractions
+    for formal, contraction in CONTRACTIONS_MAP.items():
+        if formal in text:
+            text = text.replace(formal, contraction)
+    
+    # Add transition words
+    if random.random() > 0.8 and len(text.split()) > 15:
+        transition = random.choice(TRANSITION_WORDS)
+        sentences = sent_tokenize(text)
+        if len(sentences) > 1:
+            sentences[1] = f"{transition}, {sentences[1][0].lower()}{sentences[1][1:]}"
+            text = ' '.join(sentences)
+    
+    # Add intentional typos (sparingly)
+    if random.random() > 0.9:
+        words = text.split()
+        if len(words) > 5:
+            idx = random.randint(0, len(words)-1)
+            words[idx] = words[idx].replace('ing', 'in').replace('er', 'a').replace('ed', 'd')
+            text = ' '.join(words)
+    
+    return text
+
+def restructure_sentences(text: str) -> str:
+    """Vary sentence structure for more human-like flow"""
+    sentences = sent_tokenize(text)
+    if len(sentences) < 2:
+        return text
+    
+    # Combine short sentences
+    combined = []
+    i = 0
+    while i < len(sentences):
+        if i < len(sentences)-1 and len(sentences[i].split()) < 5:
+            combined.append(f"{sentences[i]} {sentences[i+1].lower()}")
+            i += 2
+        else:
+            combined.append(sentences[i])
+            i += 1
+    
+    # Vary sentence starters
+    for i in range(1, len(combined)):
+        if combined[i].startswith("The ") or combined[i].startswith("It "):
+            words = combined[i].split()
+            words[0] = words[0].lower()
+            combined[i] = ' '.join(words)
+    
+    return ' '.join(combined)
+
+def rewrite_text(text: str, num_candidates: int = 3) -> str:
+    """Rewrite text with enhanced human-like features"""
+    if not text.strip():
+        return "[Rewrite Error]: Empty input"
+    
+    try:
+        # Load model if needed
+        if not model_loaded:
+            load_model()
+        
+        # Generate paraphrases
+        paraphrases = paraphraser(
+            f"paraphrase: {text}",
+            num_return_sequences=num_candidates,
+            max_length=512,
+            temperature=0.7
+        )
+        
+        # Select best paraphrase
+        candidates = [p['generated_text'] for p in paraphrases]
+        best_candidate = max(candidates, key=lambda x: (len(x), len(set(x.split()))))
+        
+        # Enhance human-like qualities
+        humanized = humanize_text(best_candidate)
+        restructured = restructure_sentences(humanized)
+        
+        return restructured
+    
+    except Exception as e:
+        return f"[Rewrite Error]: {str(e)}"
