@@ -1,162 +1,118 @@
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import torch
-import re
-import random
-import nltk
-from nltk.tokenize import sent_tokenize
-import threading
 import os
-import time
 import gc
+import time
+import threading
 
-# Force offline mode to prevent network requests
+# Configuration
+MODEL_NAME = "prithivida/parrot_paraphraser_on_T5"
+MAX_INPUT_LENGTH = 200  # Reduced from 512
+NUM_CANDIDATES = 1      # Only generate 1 candidate
+TEMPERATURE = 0.7       # Lower randomness for stability
+
+# Force offline mode and optimize memory
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
-# Download nltk punkt for sentence tokenization
-nltk.download('punkt', quiet=True)
-
-# Model loading status
+# Global state
 model_loaded = False
-model_loading_started = 0
 load_lock = threading.Lock()
 paraphraser = None
 
-# Humanization parameters
-CONTRACTIONS_MAP = {
-    "it is": "it's", "do not": "don't", "does not": "doesn't", "did not": "didn't",
-    "is not": "isn't", "are not": "aren't", "was not": "wasn't", "were not": "weren't",
-    "have not": "haven't", "has not": "hasn't", "had not": "hadn't", "will not": "won't",
-    "would not": "wouldn't", "should not": "shouldn't", "can not": "can't", "could not": "couldn't",
-    "I am": "I'm", "you are": "you're", "he is": "he's", "she is": "she's",
-    "we are": "we're", "they are": "they're", "that is": "that's", "there is": "there's"
-}
-
-COLLOQUIALISMS = [
-    "you know", "actually", "in fact", "basically", "to be honest", 
-    "anyway", "sort of", "kind of", "I mean", "well", "right"
-]
-
-TRANSITION_WORDS = [
-    "However", "Moreover", "Therefore", "Consequently", "Furthermore", 
-    "Nonetheless", "Meanwhile", "Similarly", "Additionally", "Interestingly"
-]
-
 def load_model():
-    """Load model in a thread-safe manner with memory optimization"""
-    global model_loaded, paraphraser, model_loading_started
-    if model_loaded:
+    """Safe model loader with aggressive memory management"""
+    global model_loaded, paraphraser
+    
+    if model_loaded: 
         return
-    
-    model_loading_started = time.time()
-    print(f"🚀 Model loading started at {model_loading_started}")
-    
+
     with load_lock:
         if model_loaded:
             return
-            
+
         try:
             # Clear memory before loading
             gc.collect()
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-            
-            print("🔧 Loading tokenizer...")
-            tokenizer = AutoTokenizer.from_pretrained("prithivida/parrot_paraphraser_on_T5")
-            
-            print("🔧 Loading model...")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print("🔄 Loading model (this may take 2-3 minutes)...")
+            start_time = time.time()
+
+            # Load with maximum memory optimization
+            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
             model = AutoModelForSeq2SeqLM.from_pretrained(
-                "prithivida/parrot_paraphraser_on_T5",
+                MODEL_NAME,
                 torch_dtype=torch.float16,
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
+                device_map="auto"
             )
-            
-            print("🔧 Creating pipeline...")
+
+            # Create pipeline with CPU fallback
             paraphraser = pipeline(
-                "text2text-generation", 
-                model=model, 
+                "text2text-generation",
+                model=model,
                 tokenizer=tokenizer,
-                device=-1,  # Force CPU-only
+                device=-1,  # Force CPU
                 framework="pt",
                 torch_dtype=torch.float16
             )
-            
-            # Free up resources
-            del model
-            gc.collect()
-            
+
             model_loaded = True
-            load_time = time.time() - model_loading_started
-            print(f"✅ Model loaded successfully in {load_time:.2f} seconds")
+            print(f"✅ Model loaded in {time.time()-start_time:.1f}s")
+
         except Exception as e:
             print(f"❌ Model loading failed: {e}")
-            # Fallback to simpler approach
+            # Emergency fallback - load with absolute minimum settings
             try:
-                print("🔄 Attempting fallback loading...")
                 paraphraser = pipeline(
-                    "text2text-generation", 
-                    model="prithivida/parrot_paraphraser_on_T5",
+                    "text2text-generation",
+                    model=MODEL_NAME,
                     device=-1,
-                    torch_dtype=torch.float16
+                    framework="pt"
                 )
                 model_loaded = True
-                print("✅ Model loaded with fallback method")
+                print("⚠️  Loaded with emergency fallback")
             except Exception as fallback_e:
-                print(f"❌ Fallback loading failed: {fallback_e}")
+                print(f"❌ Fallback failed: {fallback_e}")
 
-def humanize_text(text: str) -> str:
-    """Add human-like features to text (memory-safe implementation)"""
-    try:
-        # Use contractions
-        for formal, contraction in CONTRACTIONS_MAP.items():
-            if formal in text:
-                text = text.replace(formal, contraction)
-        
-        return text
-    except Exception:
-        return text
-
-def rewrite_text(text: str, num_candidates: int = 1) -> str:
-    """Rewrite text with enhanced human-like features and memory optimization"""
+def rewrite_text(text: str) -> str:
+    """Memory-safe text rewriting with chunking"""
     if not text.strip():
-        return "[Rewrite Error]: Empty input"
-    
-    try:
-        # Load model if needed
+        return "[Error]: Empty input"
+
+    if not model_loaded:
+        load_model()
         if not model_loaded:
-            load_model()
-            if not model_loaded:
-                return "[Rewrite Error]: Model not loaded - please try again later"
-        
-        # Split text into sentences
-        sentences = sent_tokenize(text)
-        results = []
-        
-        for sentence in sentences:
-            if len(sentence) < 10:  # Skip short sentences
-                results.append(sentence)
-                continue
-                
-            # Generate paraphrases
-            paraphrases = paraphraser(
-                f"paraphrase: {sentence}",
-                num_return_sequences=num_candidates,
-                max_length=256,
-                temperature=0.7,
-                truncation=True
-            )
-            
-            # Select best paraphrase
-            candidates = [p['generated_text'] for p in paraphrases]
-            best_candidate = max(candidates, key=lambda x: (len(x), len(set(x.split()))))
-            
-            # Enhance human-like qualities
-            humanized = humanize_text(best_candidate)
-            results.append(humanized)
-            
-            # Clean up memory between sentences
-            del paraphrases, candidates
-            gc.collect()
-        
-        return " ".join(results)
-    
+            return "[Error]: Model unavailable"
+
+    try:
+        # Process in chunks if text is long
+        if len(text) > MAX_INPUT_LENGTH:
+            chunks = [text[i:i+MAX_INPUT_LENGTH] for i in range(0, len(text), MAX_INPUT_LENGTH)]
+            results = []
+            for chunk in chunks:
+                results.append(_process_chunk(chunk))
+                gc.collect()
+            return " ".join(results)
+        return _process_chunk(text)
     except Exception as e:
-        return f"[Rewrite Error]: {str(e)}"
+        return f"[Error]: {str(e)}"
+
+def _process_chunk(chunk: str) -> str:
+    """Process a single chunk of text"""
+    try:
+        output = paraphraser(
+            f"paraphrase: {chunk}",
+            num_return_sequences=NUM_CANDIDATES,
+            max_length=MAX_INPUT_LENGTH,
+            temperature=TEMPERATURE,
+            truncation=True
+        )
+        return output[0]['generated_text']
+    except torch.cuda.OutOfMemoryError:
+        gc.collect()
+        return "[Error]: Memory limit exceeded"
+    except Exception as e:
+        return f"[Error]: {str(e)}"
