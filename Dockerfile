@@ -10,16 +10,11 @@ RUN apt-get update && \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Preload models and nltk data
+# Preload ONLY tokenizer to reduce build time
 RUN python3 -c "import nltk; nltk.download('punkt', quiet=True)" && \
-    python3 -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
-    tokenizer = AutoTokenizer.from_pretrained('prithivida/parrot_paraphraser_on_T5', cache_dir='./hf_cache'); \
-    model = AutoModelForSeq2SeqLM.from_pretrained('prithivida/parrot_paraphraser_on_T5', cache_dir='./hf_cache')"
+    python3 -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('prithivida/parrot_paraphraser_on_T5', cache_dir='./hf_cache')"
 
 COPY . .
-
-ENV PORT=3000
-EXPOSE 3000
 
 # Optimize for production
 ENV PYTHONUNBUFFERED=1 \
@@ -27,4 +22,5 @@ ENV PYTHONUNBUFFERED=1 \
     TRANSFORMERS_OFFLINE=1 \
     HF_DATASETS_OFFLINE=1
 
-CMD ["python", "rewriter.py"]
+# Use gunicorn for production server
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:$PORT", "rewriter:app"]
