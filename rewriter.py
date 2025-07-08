@@ -4,6 +4,7 @@ import logging
 import os
 import time
 import threading
+import signal
 from rewrite import load_model, model_loaded, model_loading_started
 
 app = Flask(__name__)
@@ -13,12 +14,18 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Graceful shutdown handler
+def handle_shutdown(signum, frame):
+    logger.info("Shutdown signal received, exiting gracefully")
+    os._exit(0)
+
+signal.signal(signal.SIGTERM, handle_shutdown)
+
 # Track model loading state
 model_loading_started = False
 
-@app.before_first_request
 def start_model_loading():
-    """Start model loading on first request if not already started"""
+    """Start model loading in background thread"""
     global model_loading_started
     if not model_loading_started:
         logger.info("Starting model loading in background thread")
@@ -37,45 +44,51 @@ def analyze():
     
     logger.info(f"Processing text: {original[:50]}...")
     
-    from rewrite import model_loaded
     if not model_loaded:
         # Estimate remaining load time
-        load_time = time.time() - model_loading_started
-        if load_time < 30:
-            estimate = "10-20 seconds"
-        elif load_time < 60:
+        elapsed = time.time() - model_loading_started
+        if elapsed < 60:
+            estimate = "10-30 seconds"
+        elif elapsed < 120:
             estimate = "5-10 seconds"
         else:
             estimate = "less than 5 seconds"
             
         return jsonify({
-            "error": "Model is still loading. Please try again in a few seconds.",
-            "estimated_wait": estimate
+            "error": "Model is still loading. Please try again shortly.",
+            "estimated_wait": estimate,
+            "elapsed_seconds": round(elapsed)
         }), 503
     
     from rewrite import rewrite_text
-    rewritten = rewrite_text(original)
-    bypassable = not rewritten.startswith("[Rewrite Error]")
-    
-    logger.info(f"Original: {len(original)} chars, Rewritten: {len(rewritten)} chars")
-    
-    return jsonify({
-        "original": original,
-        "rewritten": rewritten,
-        "bypassable": bypassable
-    })
+    try:
+        rewritten = rewrite_text(original)
+        bypassable = not rewritten.startswith("[Rewrite Error]")
+        
+        logger.info(f"Original: {len(original)} chars, Rewritten: {len(rewritten)} chars")
+        
+        return jsonify({
+            "original": original,
+            "rewritten": rewritten,
+            "bypassable": bypassable
+        })
+    except Exception as e:
+        logger.error(f"Rewrite error: {str(e)}")
+        return jsonify({
+            "error": "Processing failed",
+            "details": str(e)
+        }), 500
 
 @app.route("/", methods=["GET"])
 def health_check():
-    from rewrite import model_loaded
     if model_loaded:
         return jsonify({"status": "ready"}), 200
     else:
         return jsonify({
             "status": "loading",
-            "message": "Model is initializing, please try again later"
+            "message": "Model is initializing"
         }), 503
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, threaded=True)
