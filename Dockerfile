@@ -16,7 +16,7 @@ WORKDIR /app
 COPY requirements.txt .
 COPY . .
 
-# Install Python dependencies
+# Install Python dependencies with correct indexes
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     python -m spacy download en_core_web_sm
