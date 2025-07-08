@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from rewrite import load_model
 import logging
 import os
 import threading
@@ -12,8 +11,8 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Start model loading in background thread
-threading.Thread(target=load_model, daemon=True).start()
+# Start model loading in background
+threading.Thread(target=lambda: __import__('rewrite').load_model(), daemon=True).start()
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -39,7 +38,7 @@ def analyze():
         "bypassable": bypassable
     })
 
-@app.route("/health", methods=["GET"])
+@app.route("/", methods=["GET"])
 def health_check():
     from rewrite import model_loaded
     status = "ready" if model_loaded else "loading"
