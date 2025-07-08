@@ -65,7 +65,8 @@ def load_model():
             print("🔧 Loading model...")
             model = AutoModelForSeq2SeqLM.from_pretrained(
                 "prithivida/parrot_paraphraser_on_T5",
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True
             )
             
             print("🔧 Creating pipeline...")
@@ -73,15 +74,21 @@ def load_model():
                 "text2text-generation", 
                 model=model, 
                 tokenizer=tokenizer,
-                device=0 if torch.cuda.is_available() else -1
+                device=-1,  # Force CPU-only
+                framework="pt",
+                torch_dtype=torch.float16
             )
+            
+            # Free up resources
+            del model
+            gc.collect()
             
             model_loaded = True
             load_time = time.time() - model_loading_started
             print(f"✅ Model loaded successfully in {load_time:.2f} seconds")
         except Exception as e:
             print(f"❌ Model loading failed: {e}")
-            # Fallback to CPU-only with reduced precision
+            # Fallback to simpler approach
             try:
                 print("🔄 Attempting fallback loading...")
                 paraphraser = pipeline(
@@ -98,47 +105,12 @@ def load_model():
 def humanize_text(text: str) -> str:
     """Add human-like features to text (memory-safe implementation)"""
     try:
-        # Add colloquialisms
-        if random.random() > 0.7 and len(text.split()) > 10:
-            colloquial = random.choice(COLLOQUIALISMS)
-            text = f"{colloquial}, {text[0].lower()}{text[1:]}"
-        
         # Use contractions
         for formal, contraction in CONTRACTIONS_MAP.items():
             if formal in text:
                 text = text.replace(formal, contraction)
         
-        # Add transition words
-        if random.random() > 0.8 and len(text.split()) > 15:
-            transition = random.choice(TRANSITION_WORDS)
-            sentences = sent_tokenize(text)
-            if len(sentences) > 1:
-                sentences[1] = f"{transition}, {sentences[1][0].lower()}{sentences[1][1:]}"
-                text = ' '.join(sentences)
-        
         return text
-    except Exception:
-        return text
-
-def restructure_sentences(text: str) -> str:
-    """Vary sentence structure for more human-like flow"""
-    try:
-        sentences = sent_tokenize(text)
-        if len(sentences) < 2:
-            return text
-        
-        # Combine short sentences
-        combined = []
-        i = 0
-        while i < len(sentences):
-            if i < len(sentences)-1 and len(sentences[i].split()) < 5:
-                combined.append(f"{sentences[i]} {sentences[i+1].lower()}")
-                i += 2
-            else:
-                combined.append(sentences[i])
-                i += 1
-        
-        return ' '.join(combined)
     except Exception:
         return text
 
@@ -154,17 +126,20 @@ def rewrite_text(text: str, num_candidates: int = 1) -> str:
             if not model_loaded:
                 return "[Rewrite Error]: Model not loaded - please try again later"
         
-        # Split long text into chunks
-        MAX_CHUNK_LENGTH = 300
-        chunks = [text[i:i+MAX_CHUNK_LENGTH] for i in range(0, len(text), MAX_CHUNK_LENGTH)]
+        # Split text into sentences
+        sentences = sent_tokenize(text)
         results = []
         
-        for chunk in chunks:
+        for sentence in sentences:
+            if len(sentence) < 10:  # Skip short sentences
+                results.append(sentence)
+                continue
+                
             # Generate paraphrases
             paraphrases = paraphraser(
-                f"paraphrase: {chunk}",
+                f"paraphrase: {sentence}",
                 num_return_sequences=num_candidates,
-                max_length=512,
+                max_length=256,
                 temperature=0.7,
                 truncation=True
             )
@@ -175,13 +150,11 @@ def rewrite_text(text: str, num_candidates: int = 1) -> str:
             
             # Enhance human-like qualities
             humanized = humanize_text(best_candidate)
-            restructured = restructure_sentences(humanized)
-            results.append(restructured)
+            results.append(humanized)
             
-            # Clean up memory between chunks
+            # Clean up memory between sentences
             del paraphrases, candidates
             gc.collect()
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
         
         return " ".join(results)
     
