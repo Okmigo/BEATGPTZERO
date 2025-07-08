@@ -5,4 +5,4 @@ torch
 nltk
 sentencepiece
 protobuf==3.20.3
-gunicorn==21.2.0  # Add this line
+gunicorn==21.2.0
