@@ -1,72 +1,34 @@
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-import torch
-import random
-import re
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from rewrite import rewrite_text
+import logging
 
-tokenizer = AutoTokenizer.from_pretrained(
-    "prithivida/parrot_paraphraser_on_T5",
-    cache_dir="./hf_cache",
-    local_files_only=False
-)
-model = AutoModelForSeq2SeqLM.from_pretrained("prithivida/parrot_paraphraser_on_T5")
-paraphraser = pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=-1)
+app = Flask(__name__)
+CORS(app)
 
-translator_en_fr = pipeline("translation_en_to_fr", model="Helsinki-NLP/opus-mt-en-fr")
-translator_fr_en = pipeline("translation_fr_to_en", model="Helsinki-NLP/opus-mt-fr-en")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def rewrite_text(text: str) -> str:
-    try:
-        outputs = paraphraser(f"paraphrase: {text} </s>", max_length=256,
-                              do_sample=True, top_k=50, top_p=0.95, temperature=0.9,
-                              num_return_sequences=3)
-        candidate = random.choice(outputs)["generated_text"].strip()
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    data = request.json
+    original = data.get("text", "")
+    if not original:
+        return jsonify({"error": "Missing 'text'"}), 400
+    
+    logger.info(f"Processing text: {original[:50]}...")
+    
+    rewritten = rewrite_text(original)
+    bypassable = not rewritten.startswith("[Rewrite Error]")
+    
+    logger.info(f"Original length: {len(original)}, Rewritten length: {len(rewritten)}")
+    
+    return jsonify({
+        "original": original,
+        "rewritten": rewritten,
+        "bypassable": bypassable
+    })
 
-        translated = translator_en_fr(candidate, max_length=512)[0]['translation_text']
-        back_translated = translator_fr_en(translated, max_length=512)[0]['translation_text']
-
-        outputs2 = paraphraser(f"paraphrase: {back_translated} </s>", max_length=256,
-                               do_sample=True, top_k=50, top_p=0.95, temperature=0.9)
-        result = outputs2[0]["generated_text"].strip()
-
-        contractions = {
-            " do not ": " don't ", " does not ": " doesn't ",
-            " cannot ": " can't ", " could not ": " couldn't ",
-            " will not ": " won't ", " I am ": " I'm ",
-            " we are ": " we're ", " it is ": " it's ",
-            " there is ": " there's "
-        }
-        for key, val in contractions.items():
-            result = result.replace(key, val).replace(key.title(), val.title())
-
-        sentences = re.split(r'(?<=[.?!])\s+', result)
-        new_sentences = []
-        for sent in sentences:
-            if len(sent) > 100 and ',' in sent:
-                parts = sent.split(',', 1)
-                new_sentences.append(parts[0].strip() + '.')
-                new_sentences.append(parts[1].strip() + '.')
-            else:
-                new_sentences.append(sent)
-
-        merged = []
-        i = 0
-        while i < len(new_sentences):
-            if i+1 < len(new_sentences) and len(new_sentences[i].split()) < 5:
-                combined = new_sentences[i].rstrip('.').strip() + ' and ' + new_sentences[i+1].strip().capitalize()
-                if combined[-1] not in '.?!':
-                    combined += '.'
-                merged.append(combined)
-                i += 2
-            else:
-                merged.append(new_sentences[i])
-                i += 1
-        result = ' '.join(merged)
-
-        fillers = ["Anyway, ", "Interestingly, ", "You know, "]
-        if random.random() < 0.3:
-            result = random.choice(fillers) + result
-
-        return result
-
-    except Exception as e:
-        return f"[Rewrite Error]: {e}"
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
