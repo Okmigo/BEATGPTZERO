@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for transformers and nltk
+# Install system dependencies + protobuf compiler
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc build-essential curl && \
+    apt-get install -y --no-install-recommends gcc build-essential curl protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
@@ -21,7 +21,7 @@ COPY . .
 ENV PORT=3000
 EXPOSE 3000
 
-# Optimize for production use
+# Optimize for production
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TRANSFORMERS_OFFLINE=1 \
