@@ -21,6 +21,10 @@ RUN python -m spacy download en_core_web_sm
 # Copy application code
 COPY . .
 
+# Create startup script
+RUN echo '#!/bin/bash\nport=${PORT:-8080}\necho "Starting server on port $port"\nexec uvicorn app:app --host 0.0.0.0 --port $port' > /app/start.sh && \
+    chmod +x /app/start.sh
+
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
@@ -33,4 +37,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:$PORT/health || exit 1
 
 # Run the application (Cloud Run provides PORT env var)
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["/app/start.sh"]
