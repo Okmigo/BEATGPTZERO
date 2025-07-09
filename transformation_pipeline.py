@@ -1,15 +1,14 @@
 import random
 import spacy
-from typing import List, Dict, Tuple
-from transformers import pipeline, T5ForConditionalGeneration, T5Tokenizer
-from functools import lru_cache
 import re
+from typing import List
+from transformers import pipeline
+from functools import lru_cache
 
 class TransformationPipeline:
     def __init__(self):
         self.nlp = self._load_spacy_model()
-        self.tokenizer = T5Tokenizer.from_pretrained('t5-base')
-        self.model = T5ForConditionalGeneration.from_pretrained('t5-base')
+        self.paraphraser = self._load_paraphraser()
         self.transition_words = [
             'however', 'meanwhile', 'consequently', 'nonetheless', 
             'subsequently', 'thereby', 'whereas', 'likewise'
@@ -19,181 +18,145 @@ class TransformationPipeline:
     def _load_spacy_model(self):
         return spacy.load("en_core_web_sm")
     
+    @lru_cache(maxsize=1)
+    def _load_paraphraser(self):
+        """Use a more robust paraphrasing model"""
+        return pipeline(
+            "text2text-generation", 
+            model="humarin/chatgpt_paraphraser_on_T5_base",
+            max_length=512
+        )
+    
     def apply_transformations(self, text: str) -> str:
-        """Apply transformation modules with controlled probability"""
+        """Apply transformations with quality control"""
         if len(text) < 25:
             return text
             
-        # Apply core transformations
+        # Step 1: Semantic-preserving paraphrase (most important)
         text = self.controlled_paraphrase(text)
-        text = self.vary_sentence_structure(text)
-        text = self.introduce_human_quirks(text)
         
+        # Step 2: Apply only 1-2 additional transformations
+        transformations = random.sample([
+            self.inject_burstiness,
+            self.lexical_obfuscation,
+            self.add_human_quirks
+        ], k=2)
+        
+        for transform in transformations:
+            text = transform(text)
+            
         return text
 
     def controlled_paraphrase(self, text: str) -> str:
-        """Semantic-preserving rephrasing with context-aware chunking"""
+        """Improved paraphrasing with context preservation"""
         try:
-            # Process in coherent chunks (paragraphs)
+            # Process entire paragraphs to maintain context
             paragraphs = text.split('\n\n')
             paraphrased = []
+            
             for para in paragraphs:
-                if not para.strip():
-                    continue
+                if len(para.split()) > 100:  # Process long paragraphs in chunks
+                    chunks = self._split_into_sentences(para)
+                    chunk_size = max(2, min(4, len(chunks)//2))
+                    chunked_para = []
                     
-                # Process paragraph in contextually complete segments
-                chunks = self._split_paragraph(para)
-                para_text = ""
-                for chunk in chunks:
-                    inputs = self.tokenizer(
-                        f"paraphrase: {chunk}",
-                        return_tensors="pt",
-                        max_length=512,
-                        truncation=True
-                    )
-                    outputs = self.model.generate(
-                        inputs.input_ids,
-                        max_length=512,
-                        num_beams=5,
-                        early_stopping=True
-                    )
-                    para_text += self.tokenizer.decode(
-                        outputs[0], 
-                        skip_special_tokens=True
-                    ) + " "
-                paraphrased.append(para_text.strip())
+                    for i in range(0, len(chunks), chunk_size):
+                        chunk = " ".join(chunks[i:i+chunk_size])
+                        if chunk:
+                            result = self.paraphraser(
+                                f"paraphrase: {chunk}",
+                                max_length=512
+                            )[0]['generated_text']
+                            chunked_para.append(result)
+                    
+                    paraphrased.append(" ".join(chunked_para))
+                else:
+                    result = self.paraphraser(
+                        f"paraphrase: {para}",
+                        max_length=512
+                    )[0]['generated_text']
+                    paraphrased.append(result)
+                    
             return '\n\n'.join(paraphrased)
-        except Exception:
+        except Exception as e:
+            print(f"Paraphrase failed: {str(e)}")
             return text
 
-    def _split_paragraph(self, text: str) -> List[str]:
-        """Split text into coherent chunks (2-3 sentences)"""
+    def _split_into_sentences(self, text: str) -> List[str]:
+        """Split text while preserving sentence boundaries"""
+        doc = self.nlp(text)
+        return [sent.text for sent in doc.sents]
+
+    def inject_burstiness(self, text: str) -> str:
+        """Natural rhythm variations"""
         doc = self.nlp(text)
         sentences = [sent.text for sent in doc.sents]
-        chunks = []
-        current_chunk = []
         
-        for sent in sentences:
-            current_chunk.append(sent)
-            if len(current_chunk) >= 2 and random.random() > 0.6:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = []
-        
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
-        return chunks
-
-    def vary_sentence_structure(self, text: str) -> str:
-        """Introduce human-like sentence variation"""
-        doc = self.nlp(text)
-        output = []
-        
-        for sent in doc.sents:
-            sent_text = sent.text
+        if len(sentences) < 3:
+            return text
             
-            # Apply transformations probabilistically
-            if random.random() < 0.7:
-                sent_text = self._strategic_contractions(sent_text)
+        modified = []
+        for i, sent in enumerate(sentences):
+            # Only modify 20% of sentences
+            if random.random() > 0.8:
+                continue
                 
-            if random.random() < 0.4:
-                sent_text = self._vary_transitions(sent_text)
-                
-            if random.random() < 0.3 and len(sent) > 15:
-                sent_text = self._add_asides(sent_text)
-                
-            output.append(sent_text)
-            
-        return " ".join(output)
-
-    def _strategic_contractions(self, text: str) -> str:
-        """Add natural contractions (not overdone)"""
-        replacements = {
-            "it is": "it's", "do not": "don't", "is not": "isn't",
-            "cannot": "can't", "I am": "I'm", "you are": "you're",
-            "they are": "they're", "we have": "we've"
-        }
-        for full, contr in replacements.items():
-            if random.random() < 0.5 and full in text.lower():
-                text = re.sub(
-                    re.escape(full), 
-                    contr, 
-                    text, 
-                    flags=re.IGNORECASE
-                )
-        return text
-
-    def _vary_transitions(self, text: str) -> str:
-        """Diversify transition words"""
-        common_transitions = [
-            'however', 'therefore', 'furthermore', 
-            'moreover', 'consequently'
-        ]
-        for trans in common_transitions:
-            if trans in text.lower():
-                if random.random() < 0.6:
-                    replacement = random.choice(self.transition_words)
-                    text = text.replace(trans, replacement, 1)
-        return text
-
-    def _add_asides(self, text: str) -> str:
-        """Insert natural digressions"""
-        asides = [
-            " - something worth noting - ",
-            ", which is interesting, ",
-            " (this matters because) ",
-            ", surprisingly, ",
-            ", if you think about it, "
-        ]
-        words = text.split()
-        if len(words) > 8:
-            insert_pos = random.randint(3, len(words)-3)
-            words.insert(insert_pos, random.choice(asides).strip())
-            return " ".join(words)
-        return text
-
-    def introduce_human_quirks(self, text: str) -> str:
-        """Add purposeful human imperfections"""
-        # Strategic punctuation variations
-        if random.random() < 0.7:
-            text = text.replace(';', ',').replace('—', '-')
-            
-        # Occasional informal markers
-        if random.random() < 0.4:
-            informal = [
-                "sort of", "kind of", "pretty much", 
-                "you see", "actually", "basically"
+            # Apply only one transformation per sentence
+            options = [
+                self._add_transition(sent),
+                self._fragment_sentence(sent),
+                self._merge_sentences(sent, modified) if modified else sent
             ]
-            words = text.split()
-            if len(words) > 15:
-                insert_pos = random.randint(5, len(words)-5)
-                words.insert(insert_pos, random.choice(informal))
-                text = " ".join(words)
-                
-        # Controlled typo insertion (0.5% of words)
+            modified.append(random.choice(options))
+        return " ".join(modified)
+
+    def _add_transition(self, sentence: str) -> str:
+        """Add natural transition words"""
+        transitions = ["You know,", "Actually,", "Well,", "I mean,", "Interestingly,"]
+        return f"{random.choice(transitions)} {sentence}" if random.random() > 0.7 else sentence
+
+    def lexical_obfuscation(self, text: str) -> str:
+        """More natural synonym replacement"""
+        doc = self.nlp(text)
+        replacements = {
+            "very": ["extremely", "incredibly", "remarkably", "quite"],
+            "important": ["crucial", "vital", "paramount", "key"],
+            "use": ["utilize", "employ", "leverage", "apply"],
+            "show": ["demonstrate", "illustrate", "exhibit", "reveal"],
+            "good": ["excellent", "superb", "outstanding", "solid"]
+        }
+        
+        new_tokens = []
+        for token in doc:
+            lower_text = token.text.lower()
+            if lower_text in replacements and random.random() > 0.7:
+                new_tokens.append(random.choice(replacements[lower_text]))
+            else:
+                new_tokens.append(token.text)
+            new_tokens.append(token.whitespace_)
+        
+        return "".join(new_tokens)
+
+    def add_human_quirks(self, text: str) -> str:
+        """Natural human imperfections"""
+        # Add contractions
+        text = re.sub(r"\b(I am|you are|he is|she is|it is|we are|they are)\b", 
+                      lambda m: m.group(1).split()[0][:-1] + "'" + m.group(1).split()[1][0], 
+                      text, flags=re.IGNORECASE)
+        
+        # Add strategic typos to 0.1% of words
         words = text.split()
-        typo_count = max(1, len(words) // 200)
+        typo_count = max(1, len(words) // 1000)
         for _ in range(typo_count):
             idx = random.randint(0, len(words)-1)
             word = words[idx]
-            if len(word) > 4:
-                typo_type = random.choice(['swap', 'omit', 'double'])
+            if len(word) > 3:
+                typo_type = random.choice(['swap', 'omit'])
                 if typo_type == 'swap' and len(word) > 2:
                     pos = random.randint(1, len(word)-2)
                     words[idx] = word[:pos] + word[pos+1] + word[pos] + word[pos+2:]
                 elif typo_type == 'omit' and len(word) > 3:
                     pos = random.randint(1, len(word)-2)
                     words[idx] = word[:pos] + word[pos+1:]
-                elif typo_type == 'double':
-                    pos = random.randint(1, len(word)-2)
-                    words[idx] = word[:pos] + word[pos] + word[pos:]
-        text = " ".join(words)
         
-        # Sentence casing variation
-        if random.random() < 0.2:
-            sentences = [s.strip() for s in text.split('.') if s]
-            if len(sentences) > 1:
-                rand_idx = random.randint(0, len(sentences)-1)
-                sentences[rand_idx] = sentences[rand_idx].lower()
-                text = '. '.join(sentences) + '.' if text.endswith('.') else '. '.join(sentences)
-        
-        return text
+        return " ".join(words)
