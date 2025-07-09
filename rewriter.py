@@ -1,5 +1,6 @@
 import random
 import re
+import os
 from typing import List, Dict, Any, Tuple
 import spacy
 from transformers import T5Tokenizer, T5ForConditionalGeneration, pipeline
@@ -23,21 +24,41 @@ class Rewriter:
                               to use for contextual paraphrasing. T5 is a strong
                               candidate. The developer should explore options.
         """
-        logger.info(f"Loading models for text rewriting with {model_name}")
+        logger.info(f"Initializing Rewriter with model: {model_name}")
         
         # Load spaCy model for sentence segmentation and NLP
         try:
+            logger.info("Loading spaCy model: en_core_web_sm")
             self.nlp = spacy.load("en_core_web_sm")
-        except OSError:
-            logger.warning("en_core_web_sm not found, using en_core_web_md")
-            self.nlp = spacy.load("en_core_web_md")
+            logger.info("spaCy model loaded successfully")
+        except OSError as e:
+            logger.error(f"Failed to load spaCy model: {e}")
+            raise RuntimeError("spaCy model loading failed") from e
         
         # Load T5 model for paraphrasing
-        self.tokenizer = T5Tokenizer.from_pretrained(model_name)
-        self.model = T5ForConditionalGeneration.from_pretrained(model_name)
+        try:
+            logger.info("Loading T5 tokenizer and model")
+            self.tokenizer = T5Tokenizer.from_pretrained(model_name)
+            self.model = T5ForConditionalGeneration.from_pretrained(model_name)
+            logger.info("T5 model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load T5 model: {e}")
+            raise RuntimeError("T5 model loading failed") from e
         
         # Load text generation pipeline for semantic drift
-        self.text_generator = pipeline("text-generation", model="gpt2", max_length=100)
+        try:
+            logger.info("Loading GPT-2 text generation pipeline")
+            self.text_generator = pipeline(
+                "text-generation", 
+                model="gpt2", 
+                max_length=100,
+                device=-1  # Use CPU to reduce memory pressure
+            )
+            logger.info("GPT-2 pipeline initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to load GPT-2 pipeline: {e}")
+            logger.warning("Continuing without GPT-2 semantic drift capability")
+            self.text_generator = None
         
         # Define cognitive noise patterns
         self.hedge_phrases = [
@@ -97,9 +118,11 @@ class Rewriter:
             current_text, changes = self._introduce_cognitive_noise(current_text, aggressiveness)
             all_changes.extend(changes)
         
-        if aggressiveness > 0.7:
+        if aggressiveness > 0.7 and self.text_generator:
             current_text, changes = self._induce_semantic_drift(current_text, aggressiveness)
             all_changes.extend(changes)
+        elif aggressiveness > 0.7:
+            logger.warning("Semantic drift requested but GPT-2 not available")
         
         logger.info(f"Humanization complete. Applied {len(all_changes)} transformations")
         
@@ -112,10 +135,14 @@ class Rewriter:
         """
         Alters sentence structure to break predictable AI patterns.
         """
-        doc = self.nlp(text)
-        sentences = [sent.text.strip() for sent in doc.sents]
-        changes = []
+        try:
+            doc = self.nlp(text)
+            sentences = [sent.text.strip() for sent in doc.sents]
+        except Exception as e:
+            logger.error(f"Sentence parsing failed: {e}")
+            return text, ["Sentence parsing failed - using original text"]
         
+        changes = []
         result_sentences = []
         i = 0
         
@@ -180,10 +207,14 @@ class Rewriter:
         """
         Injects plausible human cognitive signals like hedging and fillers.
         """
-        doc = self.nlp(text)
-        sentences = [sent.text.strip() for sent in doc.sents]
-        changes = []
+        try:
+            doc = self.nlp(text)
+            sentences = [sent.text.strip() for sent in doc.sents]
+        except Exception as e:
+            logger.error(f"Sentence parsing failed: {e}")
+            return text, ["Sentence parsing failed - using original text"]
         
+        changes = []
         result_sentences = []
         
         for sentence in sentences:
@@ -196,18 +227,21 @@ class Rewriter:
                 changes.append(f"Added hedge phrase: '{hedge}'")
             
             # Add qualifiers to adjectives
-            elif random.random() < aggressiveness * 0.25:
+            if random.random() < aggressiveness * 0.25:
                 # Find adjectives
-                sent_doc = self.nlp(modified_sentence)
-                for token in sent_doc:
-                    if token.pos_ == "ADJ" and random.random() < 0.4:
-                        qualifier = random.choice(self.qualifiers)
-                        modified_sentence = modified_sentence.replace(token.text, f"{qualifier} {token.text}")
-                        changes.append(f"Added qualifier: '{qualifier}' to adjective")
-                        break
+                try:
+                    sent_doc = self.nlp(modified_sentence)
+                    for token in sent_doc:
+                        if token.pos_ == "ADJ" and random.random() < 0.4:
+                            qualifier = random.choice(self.qualifiers)
+                            modified_sentence = modified_sentence.replace(token.text, f"{qualifier} {token.text}")
+                            changes.append(f"Added qualifier: '{qualifier}' to adjective")
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to add qualifiers: {e}")
             
             # Add fillers mid-sentence
-            elif random.random() < aggressiveness * 0.2:
+            if random.random() < aggressiveness * 0.2:
                 filler = random.choice(self.fillers)
                 words = modified_sentence.split()
                 if len(words) > 5:
@@ -247,33 +281,36 @@ class Rewriter:
         # Use T5 for contextual paraphrasing of phrases
         if aggressiveness > 0.6:
             # Find noun phrases to rephrase
-            doc = self.nlp(modified_text)
-            noun_phrases = [chunk.text for chunk in doc.noun_chunks if len(chunk.text.split()) > 2]
-            
-            for phrase in noun_phrases[:2]:  # Limit to avoid over-processing
-                if random.random() < aggressiveness * 0.3:
-                    try:
-                        # Generate paraphrase using T5
-                        input_text = f"paraphrase: {phrase}"
-                        inputs = self.tokenizer(input_text, return_tensors="pt", max_length=64, truncation=True)
-                        
-                        with torch.no_grad():
-                            outputs = self.model.generate(
-                                inputs.input_ids,
-                                max_length=32,
-                                num_beams=3,
-                                temperature=0.8,
-                                do_sample=True
-                            )
-                        
-                        paraphrased = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                        
-                        if paraphrased and paraphrased != phrase:
-                            modified_text = modified_text.replace(phrase, paraphrased, 1)
-                            changes.append(f"Contextual paraphrase: '{phrase}' -> '{paraphrased}'")
-                    except Exception as e:
-                        logger.warning(f"Error in contextual paraphrasing: {e}")
-                        continue
+            try:
+                doc = self.nlp(modified_text)
+                noun_phrases = [chunk.text for chunk in doc.noun_chunks if len(chunk.text.split()) > 2]
+                
+                for phrase in noun_phrases[:2]:  # Limit to avoid over-processing
+                    if random.random() < aggressiveness * 0.3:
+                        try:
+                            # Generate paraphrase using T5
+                            input_text = f"paraphrase: {phrase}"
+                            inputs = self.tokenizer(input_text, return_tensors="pt", max_length=64, truncation=True)
+                            
+                            with torch.no_grad():
+                                outputs = self.model.generate(
+                                    inputs.input_ids,
+                                    max_length=32,
+                                    num_beams=3,
+                                    temperature=0.8,
+                                    do_sample=True
+                                )
+                            
+                            paraphrased = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+                            
+                            if paraphrased and paraphrased != phrase:
+                                modified_text = modified_text.replace(phrase, paraphrased, 1)
+                                changes.append(f"Contextual paraphrase: '{phrase}' -> '{paraphrased}'")
+                        except Exception as e:
+                            logger.warning(f"Error in contextual paraphrasing: {e}")
+                            continue
+            except Exception as e:
+                logger.warning(f"Failed to parse noun phrases: {e}")
         
         return modified_text, changes
 
@@ -281,11 +318,16 @@ class Rewriter:
         """
         (For high aggressiveness only) Introduces a subtle, related digression.
         """
-        if aggressiveness < 0.7:
+        if aggressiveness < 0.7 or not self.text_generator:
             return text, []
         
-        doc = self.nlp(text)
-        sentences = [sent.text.strip() for sent in doc.sents]
+        try:
+            doc = self.nlp(text)
+            sentences = [sent.text.strip() for sent in doc.sents]
+        except Exception as e:
+            logger.error(f"Sentence parsing failed: {e}")
+            return text, ["Sentence parsing failed - using original text"]
+        
         changes = []
         
         # Only apply to longer texts
@@ -302,23 +344,26 @@ class Rewriter:
                 random.random() < aggressiveness * 0.15):
                 
                 # Extract key concepts from sentence
-                sent_doc = self.nlp(sentence)
-                key_nouns = [token.text for token in sent_doc if token.pos_ == "NOUN"]
-                
-                if key_nouns:
-                    concept = random.choice(key_nouns)
+                try:
+                    sent_doc = self.nlp(sentence)
+                    key_nouns = [token.text for token in sent_doc if token.pos_ == "NOUN"]
                     
-                    # Generate related aside
-                    aside_templates = [
-                        f"(which, by the way, is something that's often misunderstood)",
-                        f"(and {concept} is particularly interesting in this context)",
-                        f"(though I should mention that {concept} can be quite complex)",
-                        f"(speaking of {concept}, it's worth noting this varies significantly)",
-                        f"(and honestly, {concept} deserves more attention than it typically gets)"
-                    ]
-                    
-                    aside = random.choice(aside_templates)
-                    result_sentences.append(aside)
-                    changes.append(f"Added semantic drift: aside about '{concept}'")
+                    if key_nouns:
+                        concept = random.choice(key_nouns)
+                        
+                        # Generate related aside
+                        aside_templates = [
+                            f"(which, by the way, is something that's often misunderstood)",
+                            f"(and {concept} is particularly interesting in this context)",
+                            f"(though I should mention that {concept} can be quite complex)",
+                            f"(speaking of {concept}, it's worth noting this varies significantly)",
+                            f"(and honestly, {concept} deserves more attention than it typically gets)"
+                        ]
+                        
+                        aside = random.choice(aside_templates)
+                        result_sentences.append(aside)
+                        changes.append(f"Added semantic drift: aside about '{concept}'")
+                except Exception as e:
+                    logger.warning(f"Failed to generate semantic drift: {e}")
         
         return " ".join(result_sentences), changes
