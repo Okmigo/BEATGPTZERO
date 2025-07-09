@@ -21,7 +21,7 @@ COPY requirements.txt .
 # Install Python dependencies with optimizations
 RUN pip install --no-cache-dir -U pip && \
     pip install --no-cache-dir -r requirements.txt && \
-    python -m spacy download en_core_web_sm --direct
+    python -m spacy download en_core_web_sm
 
 # Copy application code
 COPY . .
