@@ -1,53 +1,50 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bullseye
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
+    build-essential \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# Set cache directories
+ENV TRANSFORMERS_CACHE=/app/.cache
+ENV HF_HOME=/app/.cache
+ENV TORCH_HOME=/app/.cache/torch
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Create cache directory for transformers
-RUN mkdir -p /app/.cache
-
-# Set environment variables for transformers cache
-ENV TRANSFORMERS_CACHE=/app/.cache
-ENV HF_HOME=/app/.cache
-
-# Copy the download_models script
-COPY download_models.py .
-
-# Download the models during build
-RUN python download_models.py
-
-# Change ownership of the cache
-RUN chown -R 1000:1000 /app/.cache
+# Install Python dependencies with optimizations
+RUN pip install --no-cache-dir -U pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    python -m spacy download en_core_web_sm --direct
 
 # Copy application code
 COPY . .
 
 # Create startup script
-RUN echo '#!/bin/bash\nport=${PORT:-8080}\necho "Starting server on port $port"\nexec uvicorn app:app --host 0.0.0.0 --port $port' > /app/start.sh && \
+RUN echo '#!/bin/bash\n\
+port=${PORT:-8080}\n\
+echo "Starting server on port $port"\n\
+exec uvicorn app:app --host 0.0.0.0 --port $port' > /app/start.sh && \
     chmod +x /app/start.sh
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Create non-root user and set permissions
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/.cache && \
+    chown -R appuser:appuser /app
+
 USER appuser
 
 # Expose port
 EXPOSE 8080
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:$PORT/health || exit 1
 
 CMD ["/app/start.sh"]
