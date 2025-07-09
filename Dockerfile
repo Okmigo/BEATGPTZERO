@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
 ENV TRANSFORMERS_CACHE=/app/.cache
 ENV HF_HOME=/app/.cache
 ENV TORCH_HOME=/app/.cache/torch
+ENV PYTHONUNBUFFERED=1
 
 # Copy requirements first for better caching
 COPY requirements.txt .
@@ -30,7 +31,7 @@ COPY . .
 RUN echo '#!/bin/bash\n\
 port=${PORT:-8080}\n\
 echo "Starting server on port $port"\n\
-exec uvicorn app:app --host 0.0.0.0 --port $port' > /app/start.sh && \
+exec uvicorn app:app --host 0.0.0.0 --port $port --timeout-keep-alive 600' > /app/start.sh && \
     chmod +x /app/start.sh
 
 # Create non-root user and set permissions
@@ -43,8 +44,8 @@ USER appuser
 # Expose port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
+# Health check (only checks web server, not model loading)
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:$PORT/health || exit 1
 
 CMD ["/app/start.sh"]
