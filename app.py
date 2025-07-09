@@ -1,53 +1,71 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Dict, Any
+import uvicorn
+from rewriter import Rewriter
 import logging
-from transformation_pipeline import TransformationPipeline
-import os
 
-# Initialize app with health check endpoint
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
-    title="BeatGPTZero API",
-    description="Transforms AI-generated text to bypass detection",
+    title="HumanText API",
+    description="Adversarial Humanization Service - Transform AI text to bypass detection",
     version="1.0.0"
 )
 
-# Global initialization
-pipeline = None
-logger = logging.getLogger("uvicorn")
+# Initialize the rewriter
+rewriter = Rewriter()
 
 class HumanizeRequest(BaseModel):
-    text: str
+    text: str = Field(..., description="The AI-generated text to humanize")
+    aggressiveness: float = Field(default=0.5, ge=0.0, le=1.0, description="Transformation aggressiveness (0.0-1.0)")
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize pipeline with lazy loading"""
-    global pipeline
-    logger.info("Initializing NLP pipeline...")
-    pipeline = TransformationPipeline()
-    logger.info("Service ready")
+class HumanizeResponse(BaseModel):
+    original_text: str
+    humanized_text: str
+    aggressiveness: float
+    transformation_summary: list[str]
+
+@app.get("/")
+async def root():
+    return {"message": "HumanText API - Adversarial Humanization Service"}
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Cloud Run"""
-    return {"status": "ok", "port": os.getenv("PORT", 3000)}
+    return {"status": "healthy", "service": "humantext-api"}
 
-@app.post("/humanize")
+@app.post("/humanize", response_model=HumanizeResponse)
 async def humanize_text(request: HumanizeRequest):
     """
-    Transforms AI-generated text to evade detection
-    Input: {"text": "AI-generated content"}
-    Output: {"humanized_text": "Stealth-optimized output"}
+    Transform AI-generated text into human-like text that bypasses detection systems.
+    
+    Args:
+        request: Contains the text to humanize and aggressiveness level
+        
+    Returns:
+        HumanizeResponse with original text, humanized text, and transformation summary
     """
     try:
         if not request.text.strip():
-            raise HTTPException(status_code=400, detail="Empty input text")
+            raise HTTPException(status_code=400, detail="Text cannot be empty")
         
-        if not pipeline:
-            raise HTTPException(status_code=503, detail="Service initializing")
-            
-        transformed = pipeline.apply_transformations(request.text)
-        return {"humanized_text": transformed}
-    
+        logger.info(f"Humanizing text with aggressiveness: {request.aggressiveness}")
+        
+        # Process the text through the rewriter
+        result = rewriter.humanize(request.text, request.aggressiveness)
+        
+        return HumanizeResponse(
+            original_text=request.text,
+            humanized_text=result["humanized_text"],
+            aggressiveness=request.aggressiveness,
+            transformation_summary=result["transformation_summary"]
+        )
+        
     except Exception as e:
-        logger.error(f"Transformation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Text processing error")
+        logger.error(f"Error processing text: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error during text processing")
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8080)
