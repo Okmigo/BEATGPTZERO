@@ -4,53 +4,25 @@ FROM python:3.11-slim-bullseye
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set cache directories
-ENV TRANSFORMERS_CACHE=/app/.cache
-ENV HF_HOME=/app/.cache
-ENV TORCH_HOME=/app/.cache/torch
-ENV PYTHONUNBUFFERED=1
-
-# Copy requirements first for better caching
-COPY requirements.txt .
+RUN apt-get update && apt-get install -y build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -U pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    python -m spacy download en_core_web_sm
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download models
-RUN python -c "from transformers import T5Tokenizer, T5ForConditionalGeneration; \
-    T5Tokenizer.from_pretrained('t5-base'); \
-    T5ForConditionalGeneration.from_pretrained('t5-base')"
+# Install spaCy model
+RUN python -m spacy download en_core_web_sm
 
-# Copy application code
+# Copy application
 COPY . .
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-port=${PORT:-8080}\n\
-echo "Starting server on port $port"\n\
-exec uvicorn app:app --host 0.0.0.0 --port $port --timeout-keep-alive 600' > /app/start.sh && \
-    chmod +x /app/start.sh
-
-# Create non-root user and set permissions
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/.cache && \
-    chown -R appuser:appuser /app
-
+# Non-root user
+RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
-# Expose port
-EXPOSE 8080
-
-# Health check with extended timeout
-HEALTHCHECK --interval=30s --timeout=30s --start-period=240s --retries=3 \
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s \
     CMD curl -f http://localhost:$PORT/health || exit 1
 
-CMD ["/app/start.sh"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
