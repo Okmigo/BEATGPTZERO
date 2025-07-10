@@ -3,22 +3,28 @@ from pydantic import BaseModel, Field
 import uvicorn
 import logging
 import os
-import asyncio
 import traceback
+from rewriter import Rewriter
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="HumanText API",
     description="Adversarial Humanization Service - Transform AI text to bypass detection",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url=None
 )
 
 class HumanizeRequest(BaseModel):
     text: str = Field(..., description="The AI-generated text to humanize")
-    aggressiveness: float = Field(default=0.5, ge=0.0, le=1.0, description="Transformation aggressiveness (0.0-1.0)")
+    aggressiveness: float = Field(default=0.7, ge=0.0, le=1.0, 
+                                 description="Transformation intensity (0.0-1.0)")
 
 class HumanizeResponse(BaseModel):
     original_text: str
@@ -26,61 +32,71 @@ class HumanizeResponse(BaseModel):
     aggressiveness: float
     transformation_summary: list[str]
 
-# Initialize rewriter lazily on first request
+# Initialize rewriter during startup
 rewriter = None
-init_lock = asyncio.Lock()
 
-async def get_rewriter():
+@app.on_event("startup")
+def startup_event():
     global rewriter
-    if rewriter is None:
-        async with init_lock:
-            if rewriter is None:  # Double-check locking
-                logger.info("Lazy-loading rewriter models...")
-                from rewriter import Rewriter
-                rewriter = Rewriter()
-                logger.info("Rewriter initialized successfully")
-    return rewriter
+    logger.info("Starting service initialization")
+    
+    try:
+        rewriter = Rewriter(model_name="t5-base", max_retries=5)
+        logger.info("Rewriter initialized successfully")
+        
+        # Test with a small text
+        test_text = "Utilize advanced algorithms to optimize performance."
+        result = rewriter.humanize(test_text, 0.7)
+        logger.info(f"Test transformation: '{test_text}' → '{result['humanized_text']}'")
+        
+    except Exception as e:
+        logger.critical(f"Startup failed: {str(e)}")
+        logger.critical(traceback.format_exc())
+        raise RuntimeError("Service initialization failed")
 
 @app.get("/")
-async def root():
-    return {"message": "HumanText API - Adversarial Humanization Service"}
+def root():
+    return {
+        "service": "HumanText API",
+        "status": "operational" if rewriter else "initializing",
+        "endpoint": "/humanize",
+        "documentation": "/docs"
+    }
 
 @app.get("/health")
-async def health_check():
-    try:
-        # Lightweight health check that doesn't load models
-        return {"status": "ready", "service": "humantext-api"}
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Service unavailable")
+def health_check():
+    return {
+        "status": "ready" if rewriter else "initializing",
+        "service": "humantext-api",
+        "model_loaded": bool(rewriter and rewriter._is_initialized)
+    }
 
 @app.post("/humanize", response_model=HumanizeResponse)
-async def humanize_text(request: HumanizeRequest):
+def humanize_text(request: HumanizeRequest):
     try:
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="Text cannot be empty")
         
-        logger.info(f"Humanizing text with aggressiveness: {request.aggressiveness}")
+        logger.info(f"Humanization request (aggressiveness: {request.aggressiveness})")
         
-        # Lazy-load models on first request
-        rewriter_instance = await get_rewriter()
+        if not rewriter:
+            raise HTTPException(status_code=503, detail="Service initializing")
         
-        # Process the text
-        result = rewriter_instance.humanize(request.text, request.aggressiveness)
+        result = rewriter.humanize(request.text, request.aggressiveness)
         
-        return HumanizeResponse(
-            original_text=request.text,
-            humanized_text=result["humanized_text"],
-            aggressiveness=request.aggressiveness,
-            transformation_summary=result["transformation_summary"]
-        )
+        return {
+            "original_text": request.text,
+            "humanized_text": result["humanized_text"],
+            "aggressiveness": request.aggressiveness,
+            "transformation_summary": result["transformation_summary"]
+        }
         
     except Exception as e:
-        logger.error(f"Error processing text: {str(e)}")
+        logger.error(f"Processing error: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500, 
-            detail=f"Internal server error during text processing: {str(e)}"
+            detail=f"Processing error: {str(e)}"
         )
 
 if __name__ == "__main__":
@@ -90,5 +106,6 @@ if __name__ == "__main__":
         host="0.0.0.0", 
         port=port, 
         timeout_keep_alive=600,
-        log_level="info"
+        log_level="info",
+        access_log=False
     )
