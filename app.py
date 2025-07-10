@@ -4,6 +4,7 @@ import uvicorn
 import logging
 import os
 import asyncio
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -76,8 +77,18 @@ async def humanize_text(request: HumanizeRequest):
         
     except Exception as e:
         logger.error(f"Error processing text: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error during text processing")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error during text processing: {str(e)}"
+        )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=600)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port, 
+        timeout_keep_alive=600,
+        log_level="info"
+    )
