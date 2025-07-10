@@ -1,88 +1,114 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional
 import uvicorn
 import logging
-from rewriter import Rewriter
+from datetime import datetime
+import json
+
+from rewriter import AdvancedTextRewriter
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="HumanText API",
-    description="Text humanization service to bypass AI detection",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url=None
+    title="Advanced Text Transformation API",
+    description="Research-grade text transformation system for linguistic analysis",
+    version="1.0.0"
 )
 
-class HumanizeRequest(BaseModel):
-    text: str = Field(..., 
-                     min_length=1, 
-                     max_length=10000,
-                     description="Text to humanize")
-    aggressiveness: float = Field(0.7, 
-                                 ge=0.0, 
-                                 le=1.0,
-                                 description="Transformation intensity (0.0-1.0)")
-
-class HumanizeResponse(BaseModel):
-    humanized_text: str = Field(..., description="Transformed text")
-    transformation_summary: list[str] = Field(..., description="Applied transformations")
-
-# Initialize the rewriter during startup
-rewriter = Rewriter()
-
-@app.on_event("startup")
-def startup_event():
-    logger.info("Service starting up")
-    logger.info("Rewriter initialized successfully")
-
-@app.get("/")
-def root():
-    return {
-        "service": "HumanText API",
-        "version": "2.0",
-        "status": "operational",
-        "endpoint": "/humanize",
-        "docs": "/docs"
-    }
-
-@app.get("/health")
-def health_check():
-    return {"status": "ready", "service": "humantext-api"}
-
-@app.post("/humanize", response_model=HumanizeResponse)
-def humanize_text(request: HumanizeRequest):
-    """
-    Transform AI-generated text into human-like text that bypasses detection systems
+class TextTransformRequest(BaseModel):
+    text: str
+    aggressiveness: float = 0.7  # 0.0 to 1.0 transformation intensity
+    preserve_length: bool = False
+    target_style: str = "casual"  # casual, formal, academic, conversational
     
-    - **text**: The AI-generated text to transform
-    - **aggressiveness**: How aggressively to transform (0.0-1.0)
+class TextTransformResponse(BaseModel):
+    transformed_text: str
+    transformation_summary: str
+    original_length: int
+    transformed_length: int
+    applied_transformations: List[str]
+    confidence_score: float
+    processing_time_ms: float
+
+class HealthResponse(BaseModel):
+    status: str
+    timestamp: str
+    version: str
+
+# Initialize the text rewriter
+rewriter = AdvancedTextRewriter()
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint for deployment monitoring"""
+    return HealthResponse(
+        status="healthy",
+        timestamp=datetime.utcnow().isoformat(),
+        version="1.0.0"
+    )
+
+@app.post("/transform", response_model=TextTransformResponse)
+async def transform_text(request: TextTransformRequest):
+    """
+    Transform text using advanced linguistic processing techniques.
+    
+    This endpoint applies sophisticated text transformation algorithms
+    that analyze and modify text based on linguistic patterns found
+    in natural human writing.
     """
     try:
-        # Process the text through the rewriter
-        result = rewriter.humanize(request.text, request.aggressiveness)
+        start_time = datetime.now()
         
-        return {
-            "humanized_text": result["humanized_text"],
-            "transformation_summary": result["transformation_summary"]
-        }
+        # Input validation
+        if not request.text or len(request.text.strip()) == 0:
+            raise HTTPException(status_code=400, detail="Text input cannot be empty")
+        
+        if len(request.text) > 50000:  # Reasonable limit
+            raise HTTPException(status_code=400, detail="Text input too long (max 50,000 characters)")
+        
+        if not 0.0 <= request.aggressiveness <= 1.0:
+            raise HTTPException(status_code=400, detail="Aggressiveness must be between 0.0 and 1.0")
+        
+        # Perform transformation
+        result = rewriter.transform_text(
+            text=request.text,
+            aggressiveness=request.aggressiveness,
+            preserve_length=request.preserve_length,
+            target_style=request.target_style
+        )
+        
+        end_time = datetime.now()
+        processing_time = (end_time - start_time).total_seconds() * 1000
+        
+        # Log the transformation for monitoring
+        logger.info(f"Text transformation completed in {processing_time:.2f}ms")
+        
+        return TextTransformResponse(
+            transformed_text=result['transformed_text'],
+            transformation_summary=result['transformation_summary'],
+            original_length=len(request.text),
+            transformed_length=len(result['transformed_text']),
+            applied_transformations=result['applied_transformations'],
+            confidence_score=result['confidence_score'],
+            processing_time_ms=processing_time
+        )
         
     except Exception as e:
-        logger.error(f"Processing error: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail="Text processing error"
-        )
+        logger.error(f"Error during text transformation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "Advanced Text Transformation API",
+        "documentation": "/docs",
+        "health": "/health",
+        "transform_endpoint": "/transform"
+    }
 
 if __name__ == "__main__":
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8080,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8080)
