@@ -19,10 +19,15 @@ ENV PYTHONUNBUFFERED=1
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies with optimizations
+# Install Python dependencies
 RUN pip install --no-cache-dir -U pip && \
     pip install --no-cache-dir -r requirements.txt && \
     python -m spacy download en_core_web_sm
+
+# Pre-download models
+RUN python -c "from transformers import T5Tokenizer, T5ForConditionalGeneration; \
+    T5Tokenizer.from_pretrained('t5-base'); \
+    T5ForConditionalGeneration.from_pretrained('t5-base')"
 
 # Copy application code
 COPY . .
@@ -44,7 +49,7 @@ USER appuser
 # Expose port
 EXPOSE 8080
 
-# Health check (only checks web server, not model loading)
+# Health check with extended timeout
 HEALTHCHECK --interval=30s --timeout=30s --start-period=240s --retries=3 \
     CMD curl -f http://localhost:$PORT/health || exit 1
 
