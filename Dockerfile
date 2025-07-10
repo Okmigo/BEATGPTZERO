@@ -10,11 +10,15 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies.
-# Using --no-cache-dir reduces the image size.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download the 'punkt' sentence tokenizer from NLTK. This is required
-# by the humanizer.py script to split text into sentences.
+# --- Pre-download the AI Model ---
+# This is the new, critical step. We copy and run the download script
+# to bake the model into the image. This makes runtime startup fast and reliable.
+COPY download_model.py .
+RUN python download_model.py
+
+# Download the 'punkt' sentence tokenizer from NLTK.
 RUN python -c "import nltk; nltk.download('punkt')"
 
 # Copy the rest of the application code into the container.
@@ -24,5 +28,4 @@ COPY . .
 EXPOSE 8080
 
 # Command to run the application using uvicorn.
-# This starts the FastAPI server.
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
