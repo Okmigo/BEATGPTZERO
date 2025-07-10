@@ -1,114 +1,79 @@
+# app.py
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
 import uvicorn
 import logging
 from datetime import datetime
-import json
 
-from rewriter import AdvancedTextRewriter
+# Import the new, model-based humanizer
+from humanizer import TextHumanizer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- API Definition ---
 app = FastAPI(
-    title="Advanced Text Transformation API",
-    description="Research-grade text transformation system for linguistic analysis",
-    version="1.0.0"
+    title="Humanizer API",
+    description="Transforms AI-generated text to bypass detection using a transformer-based paraphrasing model.",
+    version="2.0.0"
 )
 
-class TextTransformRequest(BaseModel):
+# --- Pydantic Models for API I/O ---
+class HumanizeRequest(BaseModel):
     text: str
-    aggressiveness: float = 0.7  # 0.0 to 1.0 transformation intensity
-    preserve_length: bool = False
-    target_style: str = "casual"  # casual, formal, academic, conversational
-    
-class TextTransformResponse(BaseModel):
-    transformed_text: str
-    transformation_summary: str
-    original_length: int
-    transformed_length: int
-    applied_transformations: List[str]
-    confidence_score: float
-    processing_time_ms: float
 
-class HealthResponse(BaseModel):
-    status: str
-    timestamp: str
-    version: str
+class HumanizeResponse(BaseModel):
+    humanized_text: str
 
-# Initialize the text rewriter
-rewriter = AdvancedTextRewriter()
+# --- Load Model ---
+# This initializes the TextHumanizer, loading the AI model into memory.
+# It's done once at startup to ensure fast responses for API calls.
+try:
+    humanizer = TextHumanizer()
+except Exception as e:
+    logger.error(f"FATAL: Could not load the TextHumanizer model. Error: {e}")
+    # If the model fails to load, the app is non-functional.
+    humanizer = None
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint for deployment monitoring"""
-    return HealthResponse(
-        status="healthy",
-        timestamp=datetime.utcnow().isoformat(),
-        version="1.0.0"
-    )
-
-@app.post("/transform", response_model=TextTransformResponse)
-async def transform_text(request: TextTransformRequest):
+# --- API Endpoints ---
+@app.post("/humanize", response_model=HumanizeResponse)
+async def humanize_text_endpoint(request: HumanizeRequest):
     """
-    Transform text using advanced linguistic processing techniques.
-    
-    This endpoint applies sophisticated text transformation algorithms
-    that analyze and modify text based on linguistic patterns found
-    in natural human writing.
+    Receives raw AI-generated text and returns a humanized version.
+    This endpoint targets AI detection signals like perplexity and stylometry
+    by rewriting the text with a sophisticated paraphrasing model.
     """
+    if not humanizer:
+        raise HTTPException(status_code=503, detail="Service Unavailable: Model is not loaded.")
+    
+    if not request.text or len(request.text.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Input text must be at least 10 characters long.")
+    
+    if len(request.text) > 10000:
+        raise HTTPException(status_code=413, detail="Payload too large. Maximum 10,000 characters.")
+
     try:
         start_time = datetime.now()
         
-        # Input validation
-        if not request.text or len(request.text.strip()) == 0:
-            raise HTTPException(status_code=400, detail="Text input cannot be empty")
+        # This is where the core transformation happens.
+        transformed_text = humanizer.humanize(request.text)
         
-        if len(request.text) > 50000:  # Reasonable limit
-            raise HTTPException(status_code=400, detail="Text input too long (max 50,000 characters)")
+        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        logger.info(f"Humanization successful. Processing time: {processing_time:.2f}ms")
         
-        if not 0.0 <= request.aggressiveness <= 1.0:
-            raise HTTPException(status_code=400, detail="Aggressiveness must be between 0.0 and 1.0")
-        
-        # Perform transformation
-        result = rewriter.transform_text(
-            text=request.text,
-            aggressiveness=request.aggressiveness,
-            preserve_length=request.preserve_length,
-            target_style=request.target_style
-        )
-        
-        end_time = datetime.now()
-        processing_time = (end_time - start_time).total_seconds() * 1000
-        
-        # Log the transformation for monitoring
-        logger.info(f"Text transformation completed in {processing_time:.2f}ms")
-        
-        return TextTransformResponse(
-            transformed_text=result['transformed_text'],
-            transformation_summary=result['transformation_summary'],
-            original_length=len(request.text),
-            transformed_length=len(result['transformed_text']),
-            applied_transformations=result['applied_transformations'],
-            confidence_score=result['confidence_score'],
-            processing_time_ms=processing_time
-        )
-        
+        return HumanizeResponse(humanized_text=transformed_text)
+
     except Exception as e:
-        logger.error(f"Error during text transformation: {str(e)}")
+        logger.error(f"Error during text humanization: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.get("/")
-async def root():
-    """Root endpoint with API information"""
-    return {
-        "message": "Advanced Text Transformation API",
-        "documentation": "/docs",
-        "health": "/health",
-        "transform_endpoint": "/transform"
-    }
+
+@app.get("/health", status_code=200)
+async def health_check():
+    """Provides a simple health check for monitoring systems."""
+    return {"status": "ok" if humanizer else "degraded", "model_loaded": bool(humanizer)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8080)
