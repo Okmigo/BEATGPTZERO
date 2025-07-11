@@ -11,3 +11,6 @@ sentencepiece
 
 # Required for sentence tokenization
 nltk
+
+# Added dependency for the Pegasus model
+protobuf
