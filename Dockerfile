@@ -42,7 +42,6 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY --chown=appuser:appuser app.py .
-COPY --chown=appuser:appuser .env .
 
 # Switch to non-root user
 USER appuser
