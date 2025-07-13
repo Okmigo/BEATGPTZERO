@@ -17,7 +17,7 @@ RUN pip install --upgrade pip
 
 # Copy only the requirements file first to leverage Docker's layer caching.
 # This layer will only be rebuilt if requirements.txt changes.
-COPY requirements.txt.
+COPY requirements.txt .
 
 # Install dependencies into a wheelhouse. This pre-compiles the packages,
 # making the installation in the final stage much faster.
@@ -43,7 +43,7 @@ ENV PYTHONUNBUFFERED=1
 # Copy the pre-compiled wheels from the builder stage.
 COPY --from=builder /app/wheels /wheels
 # Copy the requirements file again for the pip install command.
-COPY --from=builder /app/requirements.txt.
+COPY --from=builder /app/requirements.txt .
 
 # Install the dependencies from the local wheelhouse.
 # --no-index prevents pip from looking at PyPI, ensuring only our pre-compiled wheels are used.
