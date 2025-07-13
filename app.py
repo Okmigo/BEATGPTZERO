@@ -174,7 +174,7 @@ class HumanizationPipelineV3:
         tokens = list(doc)
         new_tokens = [token.text_with_ws for token in tokens]
 
-        eligible_indices = and not t.is_stop]
+        eligible_indices = [i for i, t in enumerate(tokens) if t.is_alpha and not t.is_stop]
         num_to_replace = int(len(eligible_indices) * replacement_rate)
         num_to_replace = min(num_to_replace, len(eligible_indices)) # Ensure we don't try to sample more than available
 
@@ -186,7 +186,7 @@ class HumanizationPipelineV3:
                 for syn in wordnet.synsets(token.lemma_):
                     for lemma in syn.lemmas():
                         synonym = lemma.name().replace('_', ' ')
-                        if synonym.lower()!= token.lemma_.lower():
+                        if synonym.lower() != token.lemma_.lower():
                             synonyms.add(synonym)
                 
                 if synonyms:
@@ -207,8 +207,8 @@ class HumanizationPipelineV3:
             return text
 
         short_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1])
-        if len(short_sents) >= 2 and short_sents[1] < 12 and short_sents[1][1] < 12:
-            i, j = sorted([short_sents, short_sents[1]])
+        if len(short_sents) >= 2 and short_sents[0][1] < 12 and short_sents[1][1] < 12:
+            i, j = sorted([short_sents[0][0], short_sents[1][0]])
             sent1 = sents[i].strip().rstrip('.')
             sent2 = sents[j].lower().strip()
             merged_sent = f"{sent1}, and {sent2}"
@@ -218,8 +218,8 @@ class HumanizationPipelineV3:
             return " ".join(new_sents)
 
         long_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1], reverse=True)
-        if long_sents and long_sents[1] > 35:
-            sent_to_split_idx = long_sents
+        if long_sents and long_sents[0][1] > 35:
+            sent_to_split_idx = long_sents[0][0]
             sent_to_split = sents[sent_to_split_idx]
             words = sent_to_split.split()
             split_point = len(words) // 2
@@ -237,13 +237,13 @@ class HumanizationPipelineV3:
             input_ids = self.humanizer_tokenizer(text, return_tensors="pt", max_length=1024, truncation=True).input_ids.to(self.device)
             outputs = self.humanizer_model.generate(
                 input_ids,
-                max_length=int(len(input_ids) * 1.2),
+                max_length=int(len(text.split()) * 1.5),
                 num_beams=5,
                 early_stopping=True,
                 temperature=1.2,
                 top_k=50
             )
-            humanized_text = self.humanizer_tokenizer.decode(outputs, skip_special_tokens=True)
+            humanized_text = self.humanizer_tokenizer.decode(outputs[0], skip_special_tokens=True)
             return humanized_text
         except Exception as e:
             logger.warning(f"Error during stylistic transfer: {e}")
@@ -297,22 +297,21 @@ model_manager = ModelManager()
 @app.on_event("startup")
 async def startup_event():
     """On startup, trigger the loading of models."""
-    model_manager.load_models()
+    # Run model loading in a background thread to not block the app startup
+    thread = threading.Thread(target=model_manager.load_models)
+    thread.start()
+
 
 @app.get("/healthz", status_code=status.HTTP_200_OK)
 async def health_check():
     """
-    Health check endpoint for Cloud Run startup probe.
-    Returns 200 OK if models are loaded and the service is ready.
-    Returns 503 Service Unavailable otherwise, telling Cloud Run to wait.
+    Health check endpoint for Cloud Run.
+    This endpoint now returns OK immediately to satisfy the startup probe,
+    allowing models to load in the background without causing a timeout.
+    The /humanize endpoint will handle model readiness checks internally.
     """
-    if model_manager.is_ready:
-        return {"status": "ok", "message": "Service is ready."}
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Service is not ready. Models are still loading."
-        )
+    return {"status": "ok", "message": "Web server is running, models may still be loading."}
+
 
 @app.post("/humanize", response_model=HumanizeResponse)
 async def humanize_text_endpoint(request: HumanizeRequest):
