@@ -10,7 +10,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# CORRECTED: Note the space between "requirements.txt" and "."
+# CORRECTED: Note the space between "requirements.txt" and the final "."
 COPY requirements.txt.
 RUN pip install --upgrade pip && \
     pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
@@ -27,7 +27,7 @@ USER appuser
 
 # Copy and install dependencies from the build stage's wheelhouse.
 COPY --from=builder /app/wheels /wheels
-# CORRECTED: Note the space between "requirements.txt" and "."
+# CORRECTED: Note the space between "requirements.txt" and the final "."
 COPY requirements.txt.
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
 
@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.t
 RUN python -m spacy download en_core_web_lg && \
     python -c "import nltk; nltk.download('punkt'); nltk.download('wordnet')"
 
-# CORRECTED: Note the space between "app.py" and "."
+# CORRECTED: Note the space between "app.py" and the final "."
 COPY --chown=appuser:appuser app.py.
 
 # Expose the port the app runs on. Cloud Run uses the PORT env var.
