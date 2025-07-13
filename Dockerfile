@@ -1,63 +1,49 @@
-# Multi-stage build for optimization
-FROM python:3.11-slim as builder
+# Dockerfile
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    gcc \
-    g++ \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# --- Build Stage ---
+# Use a specific, stable base image for reproducibility.
+FROM python:3.10.13-slim-bookworm as builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Set environment variables to optimize Python.
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy requirements and install wheels for faster final stage installation.
+COPY requirements.txt.
+RUN pip install --upgrade pip && \
+    pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
 
-# Download spaCy model
-RUN python -m spacy download en_core_web_lg
 
-# Production stage
-FROM python:3.11-slim
+# --- Final Stage ---
+FROM python:3.10.13-slim-bookworm
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash appuser
-
-# Set working directory
 WORKDIR /app
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Copy application code
-COPY --chown=appuser:appuser app.py .
-
-# Switch to non-root user
+# Create a non-root user for enhanced security.
+RUN useradd --create-home appuser
 USER appuser
 
-# Set environment variables for optimization
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV TOKENIZERS_PARALLELISM=false
-ENV OMP_NUM_THREADS=4
+# Copy and install dependencies from the build stage's wheelhouse.
+COPY --from=builder /app/wheels /wheels
+COPY requirements.txt.
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
 
-# Expose port
+# Download NLP models as the non-root user during the build process.
+# This caches the models in the image layer, dramatically speeding up container startup.
+RUN python -m spacy download en_core_web_lg && \
+    python -c "import nltk; nltk.download('punkt'); nltk.download('wordnet')"
+
+# Copy application code into the container.
+COPY --chown=appuser:appuser app.py.
+
+# Expose the port the app runs on. Cloud Run uses the PORT env var.
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
-# Run application with optimized settings
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+# --- Corrected Command to run the application with Gunicorn ---
+# -w 1: Use a single worker to prevent memory duplication of large ML models. This is critical.
+# --threads 8: Allow the single worker to handle multiple concurrent requests using async I/O.
+# -k uvicorn.workers.UvicornWorker: The correct worker class for a FastAPI application.
+# -b 0.0.0.0:8080: Bind to the host and port. Cloud Run will map this to the external port.
+CMD ["gunicorn", "-w", "1", "--threads", "8", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8080", "app:app"]
