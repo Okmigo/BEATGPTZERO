@@ -135,11 +135,10 @@ class HumanizationPipelineV3:
         self.device = device
 
         # --- Target Stylometric Profile for Evasion ---
-        # These targets are based on analyses of human writing.
-        self.TARGET_TTR = 0.55  # Target Type-Token Ratio (vocabulary richness)
-        self.TARGET_SENT_LEN_STD = 7.0 # Target sentence length standard deviation (burstiness)
-        self.TARGET_READABILITY_MIN = 9.0 # Target Flesch-Kincaid Grade Level (min)
-        self.TARGET_READABILITY_MAX = 14.0 # Target Flesch-Kincaid Grade Level (max)
+        self.TARGET_TTR = 0.55
+        self.TARGET_SENT_LEN_STD = 7.0
+        self.TARGET_READABILITY_MIN = 9.0
+        self.TARGET_READABILITY_MAX = 14.0
 
     def _analyze_stylometry(self, text: str) -> StylometricProfile:
         """Calculates the stylometric profile of a text."""
@@ -147,15 +146,12 @@ class HumanizationPipelineV3:
         tokens = [token.text.lower() for token in doc if token.is_alpha]
         sents = list(doc.sents)
         
-        # Type-Token Ratio (TTR)
         ttr = len(set(tokens)) / len(tokens) if tokens else 0.0
         
-        # Sentence Length Statistics
         sent_lengths = [len([tok for tok in sent if tok.is_alpha]) for sent in sents]
         sent_len_mean = np.mean(sent_lengths) if sent_lengths else 0.0
         sent_len_std = np.std(sent_lengths) if len(sent_lengths) > 1 else 0.0
         
-        # Readability
         readability = textstat.flesch_kincaid_grade(text)
         
         return StylometricProfile(
@@ -176,25 +172,24 @@ class HumanizationPipelineV3:
 
         eligible_indices = and not t.is_stop]
         num_to_replace = int(len(eligible_indices) * replacement_rate)
-        if num_to_replace == 0 and len(eligible_indices) > 0:
-             num_to_replace = 1
+        num_to_replace = min(num_to_replace, len(eligible_indices)) # Ensure we don't try to sample more than available
 
-        indices_to_replace = random.sample(eligible_indices, num_to_replace)
-
-        for i in indices_to_replace:
-            token = tokens[i]
-            synonyms = set()
-            for syn in wordnet.synsets(token.lemma_):
-                for lemma in syn.lemmas():
-                    synonym = lemma.name().replace('_', ' ')
-                    if synonym.lower()!= token.lemma_.lower():
-                        synonyms.add(synonym)
-            
-            if synonyms:
-                replacement = random.choice(list(synonyms))
-                if token.is_title: replacement = replacement.title()
-                elif token.is_upper: replacement = replacement.upper()
-                new_tokens[i] = replacement + token.whitespace_
+        if num_to_replace > 0:
+            indices_to_replace = random.sample(eligible_indices, num_to_replace)
+            for i in indices_to_replace:
+                token = tokens[i]
+                synonyms = set()
+                for syn in wordnet.synsets(token.lemma_):
+                    for lemma in syn.lemmas():
+                        synonym = lemma.name().replace('_', ' ')
+                        if synonym.lower()!= token.lemma_.lower():
+                            synonyms.add(synonym)
+                
+                if synonyms:
+                    replacement = random.choice(list(synonyms))
+                    if token.is_title: replacement = replacement.title()
+                    elif token.is_upper: replacement = replacement.upper()
+                    new_tokens[i] = replacement + token.whitespace_
 
         return "".join(new_tokens)
 
