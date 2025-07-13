@@ -172,7 +172,7 @@ class HumanizationPipelineV3:
 
         eligible_indices = and not t.is_stop]
         num_to_replace = int(len(eligible_indices) * replacement_rate)
-        num_to_replace = min(num_to_replace, len(eligible_indices)) # Ensure we don't try to sample more than available
+        num_to_replace = min(num_to_replace, len(eligible_indices))
 
         if num_to_replace > 0:
             indices_to_replace = random.sample(eligible_indices, num_to_replace)
