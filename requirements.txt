@@ -1,23 +1,21 @@
-# requirements.txt
-
 # Core web framework
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-gunicorn==22.0.0
+fastapi
+uvicorn[standard]
+gunicorn
 
 # NLP and Machine Learning
-spacy==3.7.4
+spacy
 # Note: The spacy model 'en_core_web_lg' is downloaded in the Dockerfile
-transformers==4.41.2
-torch==2.3.1
+transformers
+torch
 # lmppl for perplexity calculation
-lmppl==0.3.1
+lmppl
 # numpy for statistical calculations
-numpy==1.26.4
+numpy
 # nltk for linguistic resources (tokenization, WordNet)
-nltk==3.8.1
+nltk
 # textstat for readability metrics
-textstat==0.7.3
+textstat
 
 # Infrastructure and utilities
-python-dotenv==1.0.1
+python-dotenv
