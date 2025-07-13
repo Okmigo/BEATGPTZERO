@@ -1,535 +1,341 @@
 # app.py
-import asyncio
-import logging
+
 import os
 import random
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Tuple, Optional, Any
-from contextlib import asynccontextmanager
+import logging
 import time
-from functools import lru_cache
-import json
+from typing import Dict, List, Tuple
 
 import numpy as np
 import spacy
 import torch
-from torch.nn.utils.rnn import pad_sequence
-from transformers import (
-    PegasusTokenizer, PegasusForConditionalGeneration,
-    AutoTokenizer, AutoModelForCausalLM, pipeline
-)
-from optimum.bettertransformer import BetterTransformer
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
+from transformers import PegasusTokenizer, PegasusForConditionalGeneration
+import lmppl
 import nltk
 from nltk.corpus import wordnet
 import textstat
-from language_tool_python import LanguageTool
-import structlog
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field, validator
-import uvicorn
 
-# Configure structured logging (unchanged)
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
+# --- Configuration and Initialization ---
 
-logger = structlog.get_logger()
+# Setup basic logging to see output in Cloud Run logs
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Load environment variables
+# Load environment variables from a.env file if present
 load_dotenv()
 
-# Configuration
-class Config:
-    MAX_WORKERS = int(os.getenv("MAX_WORKERS", "4"))
-    CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
-    BATCH_SIZE = int(os.getenv("BATCH_SIZE", "8"))
-    MODEL_PRECISION = os.getenv("MODEL_PRECISION", "fp16")
-    PERPLEXITY_THRESHOLD = float(os.getenv("PERPLEXITY_THRESHOLD", "120.0"))
-    BURSTINESS_THRESHOLD = float(os.getenv("BURSTINESS_THRESHOLD", "8.0"))
-    READABILITY_THRESHOLD = float(os.getenv("READABILITY_THRESHOLD", "12.0"))
-    LEXICAL_DIVERSITY_TARGET = float(os.getenv("LEXICAL_DIVERSITY_TARGET", "0.7"))
-    SEMANTIC_COHERENCE_TARGET = float(os.getenv("SEMANTIC_COHERENCE_TARGET", "0.85"))
+# --- Pydantic Models for API Schema ---
 
-config = Config()
-
-# Pydantic Models
 class HumanizeRequest(BaseModel):
-    text: str = Field(..., min_length=50, max_length=8000, description="Text to humanize")
-    mode: str = Field(default="balanced", regex="^(fast|balanced|thorough)$")
-    target_readability: Optional[float] = Field(default=None, ge=5.0, le=20.0)
-    preserve_length: bool = Field(default=True)
+    text: str = Field(..., min_length=50, description="Text to analyze and humanize. A minimum of 50 words is recommended for meaningful analysis.")
 
-    @validator('text')
-    def validate_text_quality(cls, v):
-        if len(v.split()) < 10:
-            raise ValueError("Text must contain at least 10 words")
-        return v
+class StylometricProfile(BaseModel):
+    ttr: float
+    sentence_length_mean: float
+    sentence_length_std: float
+    readability_flesch_kincaid: float
 
 class HumanizeResponse(BaseModel):
     original_text: str
     humanized_text: str
-    confidence_score: float = Field(..., ge=0.0, le=1.0)
-    processing_time: float
-    metrics: Dict[str, float]
-    bypass_probability: float = Field(..., ge=0.0, le=1.0)
+    original_profile: StylometricProfile
+    final_profile: StylometricProfile
+    is_humanized: bool = Field(..., description="True if the rewritten text meets the target stylometric profile.")
+    perplexity: float
+    burstiness: float
 
-# Global variables
-model_manager: Optional['OptimizedModelManager'] = None
-executor: Optional[ThreadPoolExecutor] = None
+# --- Singleton Model Manager for Stability ---
 
-# Async context manager for application lifecycle
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global model_manager, executor
+class ModelManager:
+    """
+    A thread-safe Singleton class to manage loading and access of all ML models.
+    This ensures models are loaded only once at application startup, preventing memory issues.
+    """
+    _instance = None
+    _lock = threading.Lock()
+    
+    # Readiness flag for Cloud Run health checks
+    is_ready: bool = False
 
-    logger.info("Starting humanization service...")
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(ModelManager, cls).__new__(cls)
+                    cls._instance.pipeline = None
+        return cls._instance
 
-    # Initialize thread pool executor
-    executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
-
-    # Initialize model manager
-    model_manager = OptimizedModelManager()
-    await model_manager.initialize()
-
-    logger.info("Service initialization complete")
-
-    yield
-
-    logger.info("Shutting down humanization service...")
-
-    if executor:
-        executor.shutdown(wait=True)
-
-    logger.info("Service shutdown complete")
-
-# Optimized Model Manager (unchanged)
-class OptimizedModelManager:
-    def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.models = {}
-        self.tokenizers = {}
-        self.processors = {}
-        self.initialized = False
-
-    async def initialize(self):
-        if self.initialized:
+    def load_models(self):
+        """Loads all necessary models into memory. To be called explicitly on startup."""
+        if self.is_ready:
+            logger.info("Models are already loaded.")
             return
 
-        logger.info("Initializing optimized models...")
+        with self._lock:
+            if self.is_ready:
+                return
 
-        await asyncio.gather(
-            self._load_nlp_models(),
-            self._load_generation_models(),
-            self._load_analysis_models()
-        )
-
-        self.initialized = True
-        logger.info("Model initialization complete")
-
-    async def _load_nlp_models(self):
-        loop = asyncio.get_event_loop()
-
-        def load_spacy():
-            nlp = spacy.load("en_core_web_lg")
-            nlp.disable_pipes(["ner", "textcat"])
-            return nlp
-
-        self.processors['spacy'] = await loop.run_in_executor(
-            executor, load_spacy
-        )
-
-        def load_grammar_checker():
-            return LanguageTool('en-US')
-
-        self.processors['grammar'] = await loop.run_in_executor(
-            executor, load_grammar_checker
-        )
-
-        def download_nltk_data():
             try:
-                nltk.data.find('corpora/wordnet')
-            except LookupError:
-                nltk.download('wordnet', quiet=True)
-            try:
-                nltk.data.find('corpora/stopwords')
-            except LookupError:
-                nltk.download('stopwords', quiet=True)
+                logger.info("Initializing ModelManager and loading models...")
+                start_time = time.time()
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
+                logger.info(f"Using device: {self.device}")
 
-        await loop.run_in_executor(executor, download_nltk_data)
+                # 1. spaCy for linguistic analysis
+                self.spacy_nlp = spacy.load("en_core_web_lg")
 
-        logger.info("NLP models loaded successfully")
+                # 2. Perplexity model
+                self.perplexity_scorer = lmppl.LM('gpt2', device=self.device)
 
-    async def _load_generation_models(self):
-        loop = asyncio.get_event_loop()
+                # 3. Humanization model (Pegasus-based style transfer)
+                humanizer_model_name = "Eemansleepdeprived/Humaneyes"
+                self.humanizer_tokenizer = PegasusTokenizer.from_pretrained(humanizer_model_name)
+                self.humanizer_model = PegasusForConditionalGeneration.from_pretrained(humanizer_model_name).to(self.device)
 
-        def load_optimized_model():
-            model_name = "facebook/bart-large"
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.float16 if config.MODEL_PRECISION == "fp16" else torch.float32,
-                device_map="auto" if self.device == "cuda" else None,
-                low_cpu_mem_usage=True
-            )
-            try:
-                model = BetterTransformer.transform(model)
-                logger.info("BetterTransformer optimization applied")
-            except Exception as e:
-                logger.warning(f"BetterTransformer optimization failed: {e}")
-            if hasattr(torch, 'compile'):
-                try:
-                    model = torch.compile(model)
-                    logger.info("Torch compile optimization applied")
-                except Exception as e:
-                    logger.warning(f"Torch compile optimization failed: {e}")
-            return tokenizer, model
-
-        self.tokenizers['generator'], self.models['generator'] = await loop.run_in_executor(
-            executor, load_optimized_model
-        )
-
-        logger.info("Generation models loaded successfully")
-
-    async def _load_analysis_models(self):
-        loop = asyncio.get_event_loop()
-
-        def load_perplexity_model():
-            model_name = "distilgpt2"
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.float16 if config.MODEL_PRECISION == "fp16" else torch.float32,
-                device_map="auto" if self.device == "cuda" else None
-            )
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            return tokenizer, model
-
-        self.tokenizers['perplexity'], self.models['perplexity'] = await loop.run_in_executor(
-            executor, load_perplexity_model
-        )
-
-        logger.info("Analysis models loaded successfully")
-
-# Advanced Humanization Pipeline (unchanged)
-class AdvancedHumanizationPipeline:
-    def __init__(self, model_manager: OptimizedModelManager):
-        self.model_manager = model_manager
-        self.cache = {}
-
-    @lru_cache(maxsize=1000)
-    def _get_synonyms(self, word: str, pos: str) -> List[str]:
-        synonyms = set()
-        pos_map = {
-            'NOUN': wordnet.NOUN,
-            'VERB': wordnet.VERB,
-            'ADJ': wordnet.ADJ,
-            'ADV': wordnet.ADV
-        }
-        wn_pos = pos_map.get(pos)
-        if not wn_pos:
-            return []
-        for synset in wordnet.synsets(word, pos=wn_pos):
-            for lemma in synset.lemmas():
-                synonym = lemma.name().replace('_', ' ')
-                if synonym.lower() != word.lower() and len(synonym) > 2:
-                    synonyms.add(synonym)
-        return list(synonyms)
-
-    async def _advanced_lexical_transformation(self, text: str) -> str:
-        doc = self.model_manager.processors['spacy'](text)
-        tokens = []
-        for token in doc:
-            if (token.is_alpha and not token.is_stop and 
-                token.pos_ in ['NOUN', 'VERB', 'ADJ', 'ADV'] and
-                len(token.text) > 3):
-                synonyms = self._get_synonyms(token.lemma_, token.pos_)
-                if synonyms and random.random() < 0.2:
-                    replacement = random.choice(synonyms)
-                    if token.is_title:
-                        replacement = replacement.title()
-                    elif token.is_upper:
-                        replacement = replacement.upper()
-                    tokens.append(replacement + token.whitespace_)
-                else:
-                    tokens.append(token.text_with_ws)
-            else:
-                tokens.append(token.text_with_ws)
-        return ''.join(tokens)
-
-    async def _syntactic_restructuring(self, text: str) -> str:
-        doc = self.model_manager.processors['spacy'](text)
-        sentences = list(doc.sents)
-        if len(sentences) < 2:
-            return text
-        restructured_sentences = []
-        for sent in sentences:
-            sent_text = sent.text.strip()
-            if random.random() < 0.3:
-                if self._is_active_voice(sent):
-                    transformed = self._to_passive_voice(sent_text)
-                    if transformed:
-                        sent_text = transformed
-                elif len(sent_text.split()) > 20:
-                    split_sentences = self._split_long_sentence(sent_text)
-                    restructured_sentences.extend(split_sentences)
-                    continue
-            restructured_sentences.append(sent_text)
-        return ' '.join(restructured_sentences)
-
-    def _is_active_voice(self, sent) -> bool:
-        for token in sent:
-            if token.dep_ == "nsubj" and token.head.pos_ == "VERB":
-                return True
-        return False
-
-    def _to_passive_voice(self, sentence: str) -> Optional[str]:
-        if " is " in sentence or " was " in sentence:
-            return None
-        patterns = [
-            (r'(\w+) (\w+ed) (\w+)', r'\3 was \2 by \1'),
-            (r'(\w+) (\w+s) (\w+)', r'\3 is \2 by \1'),
-        ]
-        import re
-        for pattern, replacement in patterns:
-            if re.search(pattern, sentence):
-                return re.sub(pattern, replacement, sentence)
-        return None
-
-    def _split_long_sentence(self, sentence: str) -> List[str]:
-        conjunctions = [', and ', ', but ', ', or ', ', which ', ', that ']
-        for conj in conjunctions:
-            if conj in sentence:
-                parts = sentence.split(conj, 1)
-                if len(parts) == 2:
-                    part1 = parts[0].strip() + '.'
-                    part2 = parts[1].strip()
-                    if not part2[0].isupper():
-                        part2 = part2[0].upper() + part2[1:]
-                    return [part1, part2]
-        return [sentence]
-
-    async def _semantic_enhancement(self, text: str) -> str:
-        loop = asyncio.get_event_loop()
-        def enhance_text():
-            tokenizer = self.model_manager.tokenizers['generator']
-            model = self.model_manager.models['generator']
-            inputs = tokenizer(
-                f"Rewrite this text to be more natural and human-like: {text}",
-                return_tensors="pt",
-                max_length=512,
-                truncation=True
-            )
-            with torch.no_grad():
-                outputs = model.generate(
-                    inputs.input_ids,
-                    max_length=min(len(inputs.input_ids[0]) + 100, 512),
-                    temperature=0.8,
-                    do_sample=True,
-                    top_p=0.9,
-                    pad_token_id=tokenizer.eos_token_id
+                # 4. Initialize the full V3 pipeline
+                self.pipeline = HumanizationPipelineV3(
+                    spacy_nlp=self.spacy_nlp,
+                    perplexity_scorer=self.perplexity_scorer,
+                    humanizer_tokenizer=self.humanizer_tokenizer,
+                    humanizer_model=self.humanizer_model,
+                    device=self.device
                 )
-            enhanced = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            if ":" in enhanced:
-                enhanced = enhanced.split(":", 1)[1].strip()
-            return enhanced
-        try:
-            enhanced_text = await loop.run_in_executor(executor, enhance_text)
-            return enhanced_text if enhanced_text else text
-        except Exception as e:
-            logger.warning(f"Semantic enhancement failed: {e}")
+                
+                # Set the readiness flag ONLY after all models are loaded
+                self.is_ready = True
+                end_time = time.time()
+                logger.info(f"All models and pipeline loaded successfully in {end_time - start_time:.2f} seconds. Service is ready.")
+
+            except Exception as e:
+                logger.error(f"FATAL: Model loading failed: {e}", exc_info=True)
+                self.is_ready = False
+                raise e
+
+    def get_pipeline(self):
+        if not self.is_ready or not self.pipeline:
+            raise RuntimeError("Pipeline is not available. Models may not have loaded correctly.")
+        return self.pipeline
+
+# --- The Advanced Humanization Pipeline V3 ---
+
+class HumanizationPipelineV3:
+    """
+    A multi-stage pipeline that uses stylometry to transform AI text.
+    It analyzes the text's "fingerprint" and intelligently perturbs it to match human patterns.
+    """
+    def __init__(self, spacy_nlp, perplexity_scorer, humanizer_tokenizer, humanizer_model, device):
+        self.nlp = spacy_nlp
+        self.perplexity_scorer = perplexity_scorer
+        self.humanizer_tokenizer = humanizer_tokenizer
+        self.humanizer_model = humanizer_model
+        self.device = device
+
+        # --- Target Stylometric Profile for Evasion ---
+        # These targets are based on analyses of human writing.
+        self.TARGET_TTR = 0.55  # Target Type-Token Ratio (vocabulary richness)
+        self.TARGET_SENT_LEN_STD = 7.0 # Target sentence length standard deviation (burstiness)
+        self.TARGET_READABILITY_MIN = 9.0 # Target Flesch-Kincaid Grade Level (min)
+        self.TARGET_READABILITY_MAX = 14.0 # Target Flesch-Kincaid Grade Level (max)
+
+    def _analyze_stylometry(self, text: str) -> StylometricProfile:
+        """Calculates the stylometric profile of a text."""
+        doc = self.nlp(text)
+        tokens = [token.text.lower() for token in doc if token.is_alpha]
+        sents = list(doc.sents)
+        
+        # Type-Token Ratio (TTR)
+        ttr = len(set(tokens)) / len(tokens) if tokens else 0.0
+        
+        # Sentence Length Statistics
+        sent_lengths = [len([tok for tok in sent if tok.is_alpha]) for sent in sents]
+        sent_len_mean = np.mean(sent_lengths) if sent_lengths else 0.0
+        sent_len_std = np.std(sent_lengths) if len(sent_lengths) > 1 else 0.0
+        
+        # Readability
+        readability = textstat.flesch_kincaid_grade(text)
+        
+        return StylometricProfile(
+            ttr=ttr,
+            sentence_length_mean=sent_len_mean,
+            sentence_length_std=sent_len_std,
+            readability_flesch_kincaid=readability
+        )
+
+    def _targeted_lexical_perturbation(self, text: str, profile: StylometricProfile) -> str:
+        """Intelligently replaces words to increase vocabulary richness (TTR)."""
+        ttr_gap = self.TARGET_TTR - profile.ttr
+        replacement_rate = max(0.05, min(0.25, ttr_gap * 0.5))
+        
+        doc = self.nlp(text)
+        tokens = list(doc)
+        new_tokens = [token.text_with_ws for token in tokens]
+
+        eligible_indices = and not t.is_stop]
+        num_to_replace = int(len(eligible_indices) * replacement_rate)
+        if num_to_replace == 0 and len(eligible_indices) > 0:
+             num_to_replace = 1
+
+        indices_to_replace = random.sample(eligible_indices, num_to_replace)
+
+        for i in indices_to_replace:
+            token = tokens[i]
+            synonyms = set()
+            for syn in wordnet.synsets(token.lemma_):
+                for lemma in syn.lemmas():
+                    synonym = lemma.name().replace('_', ' ')
+                    if synonym.lower()!= token.lemma_.lower():
+                        synonyms.add(synonym)
+            
+            if synonyms:
+                replacement = random.choice(list(synonyms))
+                if token.is_title: replacement = replacement.title()
+                elif token.is_upper: replacement = replacement.upper()
+                new_tokens[i] = replacement + token.whitespace_
+
+        return "".join(new_tokens)
+
+    def _targeted_structural_perturbation(self, text: str, profile: StylometricProfile) -> str:
+        """Intelligently merges/splits sentences to increase sentence length variation."""
+        if profile.sentence_length_std >= self.TARGET_SENT_LEN_STD:
             return text
 
-    async def _calculate_advanced_metrics(self, text: str) -> Dict[str, float]:
-        loop = asyncio.get_event_loop()
-        def calculate_metrics():
-            metrics = {}
-            metrics['perplexity'] = self._calculate_perplexity(text)
-            metrics['burstiness'] = self._calculate_burstiness(text)
-            metrics['readability'] = textstat.flesch_reading_ease(text)
-            metrics['lexical_diversity'] = self._calculate_lexical_diversity(text)
-            metrics['semantic_coherence'] = self._calculate_semantic_coherence(text)
-            metrics['syntactic_complexity'] = self._calculate_syntactic_complexity(text)
-            return metrics
-        return await loop.run_in_executor(executor, calculate_metrics)
+        sents = nltk.sent_tokenize(text)
+        if len(sents) < 3:
+            return text
 
-    def _calculate_perplexity(self, text: str) -> float:
+        short_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1])
+        if len(short_sents) >= 2 and short_sents[1] < 12 and short_sents[1][1] < 12:
+            i, j = sorted([short_sents, short_sents[1]])
+            sent1 = sents[i].strip().rstrip('.')
+            sent2 = sents[j].lower().strip()
+            merged_sent = f"{sent1}, and {sent2}"
+            
+            new_sents = [s for k, s in enumerate(sents) if k not in [i, j]]
+            new_sents.insert(i, merged_sent)
+            return " ".join(new_sents)
+
+        long_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1], reverse=True)
+        if long_sents and long_sents[1] > 35:
+            sent_to_split_idx = long_sents
+            sent_to_split = sents[sent_to_split_idx]
+            words = sent_to_split.split()
+            split_point = len(words) // 2
+            part1 = " ".join(words[:split_point]) + "."
+            part2 = " ".join(words[split_point:]).capitalize()
+            
+            sents[sent_to_split_idx:sent_to_split_idx+1] = [part1, part2]
+            return " ".join(sents)
+
+        return text
+
+    def _stylistic_transfer(self, text: str) -> str:
+        """Uses a specialized model to polish the text and apply a human-like style."""
         try:
-            tokenizer = self.model_manager.tokenizers['perplexity']
-            model = self.model_manager.models['perplexity']
-            inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-            with torch.no_grad():
-                outputs = model(**inputs, labels=inputs.input_ids)
-                loss = outputs.loss
-                perplexity = torch.exp(loss).item()
-            return min(perplexity, 1000.0)
+            input_ids = self.humanizer_tokenizer(text, return_tensors="pt", max_length=1024, truncation=True).input_ids.to(self.device)
+            outputs = self.humanizer_model.generate(
+                input_ids,
+                max_length=int(len(input_ids) * 1.2),
+                num_beams=5,
+                early_stopping=True,
+                temperature=1.2,
+                top_k=50
+            )
+            humanized_text = self.humanizer_tokenizer.decode(outputs, skip_special_tokens=True)
+            return humanized_text
         except Exception as e:
-            logger.warning(f"Perplexity calculation failed: {e}")
-            return 100.0
+            logger.warning(f"Error during stylistic transfer: {e}")
+            return text
 
-    def _calculate_burstiness(self, text: str) -> float:
-        doc = self.model_manager.processors['spacy'](text)
-        sentences = list(doc.sents)
-        if len(sentences) < 2:
-            return 0.0
-        word_lengths = [len([token for token in sent if token.is_alpha]) for sent in sentences]
-        char_lengths = [len(sent.text) for sent in sentences]
-        word_cv = np.std(word_lengths) / np.mean(word_lengths) if np.mean(word_lengths) > 0 else 0
-        char_cv = np.std(char_lengths) / np.mean(char_lengths) if np.mean(char_lengths) > 0 else 0
-        burstiness = (word_cv + char_cv) / 2 * 10
-        return min(burstiness, 20.0)
-
-    def _calculate_lexical_diversity(self, text: str) -> float:
-        doc = self.model_manager.processors['spacy'](text)
-        words = [token.lemma_.lower() for token in doc if token.is_alpha]
-        if not words:
-            return 0.0
-        unique_words = set(words)
-        return len(unique_words) / len(words)
-
-    def _calculate_semantic_coherence(self, text: str) -> float:
-        doc = self.model_manager.processors['spacy'](text)
-        sentences = list(doc.sents)
-        if len(sentences) < 2:
-            return 1.0
-        coherence_scores = []
-        for i in range(len(sentences) - 1):
-            sent1 = sentences[i]
-            sent2 = sentences[i + 1]
-            words1 = set(token.lemma_.lower() for token in sent1 if token.is_alpha)
-            words2 = set(token.lemma_.lower() for token in sent2 if token.is_alpha)
-            if words1 and words2:
-                overlap = len(words1 & words2) / len(words1 | words2)
-                coherence_scores.append(overlap)
-        return np.mean(coherence_scores) if coherence_scores else 0.5
-
-    def _calculate_syntactic_complexity(self, text: str) -> float:
-        doc = self.model_manager.processors['spacy'](text)
-        total_deps = 0
-        complex_deps = 0
-        for token in doc:
-            total_deps += 1
-            if token.dep_ in ['acl', 'advcl', 'ccomp', 'xcomp', 'relcl']:
-                complex_deps += 1
-        complexity = complex_deps / total_deps if total_deps > 0 else 0
-        return complexity * 10
-
-    async def _calculate_bypass_probability(self, metrics: Dict[str, float]) -> float:
-        scores = []
-        perplexity_score = min(metrics['perplexity'] / config.PERPLEXITY_THRESHOLD, 1.0)
-        scores.append(perplexity_score * 0.2)
-        burstiness_score = min(metrics['burstiness'] / config.BURSTINESS_THRESHOLD, 1.0)
-        scores.append(burstiness_score * 0.15)
-        lexical_score = min(metrics['lexical_diversity'] / config.LEXICAL_DIVERSITY_TARGET, 1.0)
-        scores.append(lexical_score * 0.25)
-        semantic_score = min(metrics['semantic_coherence'] / config.SEMANTIC_COHERENCE_TARGET, 1.0)
-        scores.append(semantic_score * 0.25)
-        complexity_score = min(metrics['syntactic_complexity'] / 5.0, 1.0)
-        scores.append(complexity_score * 0.15)
-        bypass_probability = sum(scores)
-        bypass_probability = 1 / (1 + np.exp(-5 * (bypass_probability - 0.5)))
-        return bypass_probability
-
-    async def process(self, text: str, mode: str = "balanced") -> Tuple[str, Dict[str, float], float]:
-        start_time = time.time()
+    def _validate_output(self, text: str, profile: StylometricProfile) -> Tuple[float, float, bool]:
+        """Calculates final metrics and validates against targets."""
+        burstiness = profile.sentence_length_std
+        
+        is_humanized = (
+            profile.ttr >= self.TARGET_TTR and
+            burstiness >= self.TARGET_SENT_LEN_STD and
+            self.TARGET_READABILITY_MIN <= profile.readability_flesch_kincaid <= self.TARGET_READABILITY_MAX
+        )
+        
         try:
-            transformed_text = await self._advanced_lexical_transformation(text)
-            restructured_text = await self._syntactic_restructuring(transformed_text)
-            if mode in ["balanced", "thorough"]:
-                enhanced_text = await self._semantic_enhancement(restructured_text)
-            else:
-                enhanced_text = restructured_text
-            metrics = await self._calculate_advanced_metrics(enhanced_text)
-            bypass_probability = await self._calculate_bypass_probability(metrics)
-            processing_time = time.time() - start_time
-            metrics['processing_time'] = processing_time
-            return enhanced_text, metrics, bypass_probability
+            perplexity = self.perplexity_scorer.get_perplexity([text])
         except Exception as e:
-            logger.error(f"Pipeline processing failed: {e}")
-            metrics = {
-                'perplexity': 50.0,
-                'burstiness': 2.0,
-                'processing_time': time.time() - start_time,
-                'error': str(e)
-            }
-            return text, metrics, 0.3
+            logger.warning(f"Error calculating perplexity: {e}")
+            perplexity = 0.0
 
-# FastAPI Application
+        return perplexity, burstiness, is_humanized
+
+    def run(self, text: str) -> Tuple:
+        """Executes the full V3 pipeline."""
+        original_profile = self._analyze_stylometry(text)
+        
+        perturbed_text = text
+        for _ in range(2):
+            current_profile = self._analyze_stylometry(perturbed_text)
+            perturbed_text = self._targeted_lexical_perturbation(perturbed_text, current_profile)
+            perturbed_text = self._targeted_structural_perturbation(perturbed_text, self._analyze_stylometry(perturbed_text))
+
+        humanized_text = self._stylistic_transfer(perturbed_text)
+        
+        final_profile = self._analyze_stylometry(humanized_text)
+        perplexity, burstiness, is_humanized = self._validate_output(humanized_text, final_profile)
+
+        return humanized_text, original_profile, final_profile, is_humanized, perplexity, burstiness
+
+# --- FastAPI Application Setup ---
+
 app = FastAPI(
-    title="Advanced AI Text Humanizer",
-    description="High-performance text humanization service with advanced AI detection bypass",
+    title="Humanizer V3 API",
+    description="An API that rewrites text using a multi-stage stylometric pipeline to bypass advanced AI detectors.",
     version="3.0.0",
-    lifespan=lifespan
 )
 
+model_manager = ModelManager()
+
+@app.on_event("startup")
+async def startup_event():
+    """On startup, trigger the loading of models."""
+    model_manager.load_models()
+
+@app.get("/healthz", status_code=status.HTTP_200_OK)
+async def health_check():
+    """
+    Health check endpoint for Cloud Run startup probe.
+    Returns 200 OK if models are loaded and the service is ready.
+    Returns 503 Service Unavailable otherwise, telling Cloud Run to wait.
+    """
+    if model_manager.is_ready:
+        return {"status": "ok", "message": "Service is ready."}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is not ready. Models are still loading."
+        )
+
 @app.post("/humanize", response_model=HumanizeResponse)
-async def humanize_text(request: HumanizeRequest, background_tasks: BackgroundTasks):
-    start_time = time.time()
+async def humanize_text_endpoint(request: HumanizeRequest):
+    """
+    This endpoint takes AI-generated text and processes it through the Humanizer V3 pipeline.
+    """
+    if not model_manager.is_ready:
+        raise HTTPException(status_code=503, detail="Models are not loaded yet. Please try again in a moment.")
+
     try:
-        pipeline = AdvancedHumanizationPipeline(model_manager)
-        humanized_text, metrics, bypass_probability = await pipeline.process(
-            request.text, request.mode
-        )
-        confidence_score = min(
-            (metrics.get('perplexity', 50) / 150.0) * 0.4 +
-            (metrics.get('burstiness', 2) / 10.0) * 0.3 +
-            (metrics.get('lexical_diversity', 0.5) / 0.8) * 0.3,
-            1.0
-        )
-        response = HumanizeResponse(
+        pipeline = model_manager.get_pipeline()
+        humanized_text, original_profile, final_profile, is_humanized, perplexity, burstiness = pipeline.run(request.text)
+
+        return HumanizeResponse(
             original_text=request.text,
             humanized_text=humanized_text,
-            confidence_score=confidence_score,
-            processing_time=time.time() - start_time,
-            metrics=metrics,
-            bypass_probability=bypass_probability
+            original_profile=original_profile,
+            final_profile=final_profile,
+            is_humanized=is_humanized,
+            perplexity=perplexity,
+            burstiness=burstiness
         )
-        return response
     except Exception as e:
-        logger.error(f"Humanization failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
-
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "timestamp": time.time(),
-        "models_loaded": model_manager.initialized if model_manager else False
-    }
-
-@app.get("/metrics")
-async def get_metrics():
-    return {
-        "device": model_manager.device if model_manager else "unknown",
-        "models_loaded": len(model_manager.models) if model_manager else 0,
-        "config": {
-            "perplexity_threshold": config.PERPLEXITY_THRESHOLD,
-            "burstiness_threshold": config.BURSTINESS_THRESHOLD,
-            "batch_size": config.BATCH_SIZE
-        }
-    }
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=8080,
-        workers=1,
-        reload=False,
-        access_log=True
-    )
+        logger.error(f"An unexpected error occurred during humanization: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An internal server error occurred during text processing.")
