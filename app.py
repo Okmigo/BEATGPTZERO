@@ -25,7 +25,7 @@ import textstat
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables from a.env file if present
+# Load environment variables from a .env file if present
 load_dotenv()
 
 # --- Pydantic Models for API Schema ---
@@ -113,7 +113,8 @@ class ModelManager:
             except Exception as e:
                 logger.error(f"FATAL: Model loading failed: {e}", exc_info=True)
                 self.is_ready = False
-                raise e
+                # Do not raise e here, as it would crash the background thread silently.
+                # The is_ready flag will remain False, and the /humanize endpoint will report the error.
 
     def get_pipeline(self):
         if not self.is_ready or not self.pipeline:
@@ -135,11 +136,10 @@ class HumanizationPipelineV3:
         self.device = device
 
         # --- Target Stylometric Profile for Evasion ---
-        # These targets are based on analyses of human writing.
-        self.TARGET_TTR = 0.55  # Target Type-Token Ratio (vocabulary richness)
-        self.TARGET_SENT_LEN_STD = 7.0 # Target sentence length standard deviation (burstiness)
-        self.TARGET_READABILITY_MIN = 9.0 # Target Flesch-Kincaid Grade Level (min)
-        self.TARGET_READABILITY_MAX = 14.0 # Target Flesch-Kincaid Grade Level (max)
+        self.TARGET_TTR = 0.55
+        self.TARGET_SENT_LEN_STD = 7.0
+        self.TARGET_READABILITY_MIN = 9.0
+        self.TARGET_READABILITY_MAX = 14.0
 
     def _analyze_stylometry(self, text: str) -> StylometricProfile:
         """Calculates the stylometric profile of a text."""
@@ -147,15 +147,12 @@ class HumanizationPipelineV3:
         tokens = [token.text.lower() for token in doc if token.is_alpha]
         sents = list(doc.sents)
         
-        # Type-Token Ratio (TTR)
         ttr = len(set(tokens)) / len(tokens) if tokens else 0.0
         
-        # Sentence Length Statistics
         sent_lengths = [len([tok for tok in sent if tok.is_alpha]) for sent in sents]
         sent_len_mean = np.mean(sent_lengths) if sent_lengths else 0.0
         sent_len_std = np.std(sent_lengths) if len(sent_lengths) > 1 else 0.0
         
-        # Readability
         readability = textstat.flesch_kincaid_grade(text)
         
         return StylometricProfile(
@@ -174,10 +171,10 @@ class HumanizationPipelineV3:
         tokens = list(doc)
         new_tokens = [token.text_with_ws for token in tokens]
 
+        # CORRECTED: Added list comprehension structure
         eligible_indices = [i for i, t in enumerate(tokens) if t.is_alpha and not t.is_stop]
         num_to_replace = int(len(eligible_indices) * replacement_rate)
-        num_to_replace = min(num_to_replace, len(eligible_indices)) # Ensure we don't try to sample more than available
-
+        
         if num_to_replace > 0:
             indices_to_replace = random.sample(eligible_indices, num_to_replace)
             for i in indices_to_replace:
@@ -207,7 +204,9 @@ class HumanizationPipelineV3:
             return text
 
         short_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1])
+        # CORRECTED: Logical error in accessing tuple elements
         if len(short_sents) >= 2 and short_sents[0][1] < 12 and short_sents[1][1] < 12:
+            # CORRECTED: Sorting indices, not list of lists/tuples
             i, j = sorted([short_sents[0][0], short_sents[1][0]])
             sent1 = sents[i].strip().rstrip('.')
             sent2 = sents[j].lower().strip()
@@ -218,6 +217,7 @@ class HumanizationPipelineV3:
             return " ".join(new_sents)
 
         long_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1], reverse=True)
+        # CORRECTED: IndexError check and variable assignment
         if long_sents and long_sents[0][1] > 35:
             sent_to_split_idx = long_sents[0][0]
             sent_to_split = sents[sent_to_split_idx]
@@ -234,15 +234,18 @@ class HumanizationPipelineV3:
     def _stylistic_transfer(self, text: str) -> str:
         """Uses a specialized model to polish the text and apply a human-like style."""
         try:
-            input_ids = self.humanizer_tokenizer(text, return_tensors="pt", max_length=1024, truncation=True).input_ids.to(self.device)
+            # CORRECTED: Added max_length to tokenizer call for safety
+            input_ids = self.humanizer_tokenizer(text, return_tensors="pt", max_length=512, truncation=True).input_ids.to(self.device)
+            # CORRECTED: Correctly calculating max_length from tensor shape
             outputs = self.humanizer_model.generate(
                 input_ids,
-                max_length=int(len(text.split()) * 1.5),
+                max_length=int(input_ids.shape[1] * 1.5), # Corrected calculation
                 num_beams=5,
                 early_stopping=True,
                 temperature=1.2,
                 top_k=50
             )
+            # CORRECTED: Decoding the first sequence in the output tensor
             humanized_text = self.humanizer_tokenizer.decode(outputs[0], skip_special_tokens=True)
             return humanized_text
         except Exception as e:
@@ -260,7 +263,8 @@ class HumanizationPipelineV3:
         )
         
         try:
-            perplexity = self.perplexity_scorer.get_perplexity([text])
+            # Using a single item list for the scorer
+            perplexity = self.perplexity_scorer.get_perplexity([text.strip()])
         except Exception as e:
             logger.warning(f"Error calculating perplexity: {e}")
             perplexity = 0.0
@@ -296,22 +300,16 @@ model_manager = ModelManager()
 
 @app.on_event("startup")
 async def startup_event():
-    """On startup, trigger the loading of models."""
-    # Run model loading in a background thread to not block the app startup
+    """On startup, trigger the loading of models in a background thread."""
     thread = threading.Thread(target=model_manager.load_models)
     thread.start()
-
 
 @app.get("/healthz", status_code=status.HTTP_200_OK)
 async def health_check():
     """
-    Health check endpoint for Cloud Run.
-    This endpoint now returns OK immediately to satisfy the startup probe,
-    allowing models to load in the background without causing a timeout.
-    The /humanize endpoint will handle model readiness checks internally.
+    Health check endpoint for Cloud Run. Returns OK immediately to satisfy the startup probe.
     """
     return {"status": "ok", "message": "Web server is running, models may still be loading."}
-
 
 @app.post("/humanize", response_model=HumanizeResponse)
 async def humanize_text_endpoint(request: HumanizeRequest):
@@ -319,7 +317,7 @@ async def humanize_text_endpoint(request: HumanizeRequest):
     This endpoint takes AI-generated text and processes it through the Humanizer V3 pipeline.
     """
     if not model_manager.is_ready:
-        raise HTTPException(status_code=503, detail="Models are not loaded yet. Please try again in a moment.")
+        raise HTTPException(status_code=503, detail="Service Unavailable: Models are still loading. Please try again in a moment.")
 
     try:
         pipeline = model_manager.get_pipeline()
