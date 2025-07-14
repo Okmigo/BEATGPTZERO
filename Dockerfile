@@ -21,7 +21,7 @@ FROM python:3.10.13-slim-bookworm
 
 WORKDIR /app
 
-RUN useradd --create-home appuser
+RUN adduser --system --group --no-create-home appuser
 USER appuser
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -32,12 +32,14 @@ COPY --from=builder /app/requirements.txt .
 
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
 
+# Download and cache models as the appuser
 RUN python -m spacy download en_core_web_lg && \
-    python -c "import nltk; nltk.download('wordnet', quiet=True)"
+    python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('wordnet', quiet=True)"
 
 # Copy the application source code
 COPY --chown=appuser:appuser . .
 
 EXPOSE 8080
 
-CMD ["gunicorn", "-w", "2", "-k", "uvicorn.worker.UvicornWorker", "-b", "0.0.0.0:8080", "app:app"]
+# CORRECTED: CMD instruction format for gunicorn
+CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8080", "app:app"]
