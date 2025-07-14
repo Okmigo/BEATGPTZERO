@@ -113,8 +113,9 @@ class ModelManager:
             except Exception as e:
                 logger.error(f"FATAL: Model loading failed: {e}", exc_info=True)
                 self.is_ready = False
-                # Do not raise e here, as it would crash the background thread silently.
-                # The is_ready flag will remain False, and the /humanize endpoint will report the error.
+                # CORRECTED: Do not raise the exception here. Raising it would kill the
+                # background thread silently, leaving the app in a permanent "loading" state.
+                # The error is logged, which is sufficient for debugging.
 
     def get_pipeline(self):
         if not self.is_ready or not self.pipeline:
@@ -171,7 +172,6 @@ class HumanizationPipelineV3:
         tokens = list(doc)
         new_tokens = [token.text_with_ws for token in tokens]
 
-        # CORRECTED: Added list comprehension structure
         eligible_indices = [i for i, t in enumerate(tokens) if t.is_alpha and not t.is_stop]
         num_to_replace = int(len(eligible_indices) * replacement_rate)
         
@@ -204,9 +204,7 @@ class HumanizationPipelineV3:
             return text
 
         short_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1])
-        # CORRECTED: Logical error in accessing tuple elements
         if len(short_sents) >= 2 and short_sents[0][1] < 12 and short_sents[1][1] < 12:
-            # CORRECTED: Sorting indices, not list of lists/tuples
             i, j = sorted([short_sents[0][0], short_sents[1][0]])
             sent1 = sents[i].strip().rstrip('.')
             sent2 = sents[j].lower().strip()
@@ -217,7 +215,6 @@ class HumanizationPipelineV3:
             return " ".join(new_sents)
 
         long_sents = sorted([(i, len(s.split())) for i, s in enumerate(sents)], key=lambda x: x[1], reverse=True)
-        # CORRECTED: IndexError check and variable assignment
         if long_sents and long_sents[0][1] > 35:
             sent_to_split_idx = long_sents[0][0]
             sent_to_split = sents[sent_to_split_idx]
@@ -234,18 +231,15 @@ class HumanizationPipelineV3:
     def _stylistic_transfer(self, text: str) -> str:
         """Uses a specialized model to polish the text and apply a human-like style."""
         try:
-            # CORRECTED: Added max_length to tokenizer call for safety
             input_ids = self.humanizer_tokenizer(text, return_tensors="pt", max_length=512, truncation=True).input_ids.to(self.device)
-            # CORRECTED: Correctly calculating max_length from tensor shape
             outputs = self.humanizer_model.generate(
                 input_ids,
-                max_length=int(input_ids.shape[1] * 1.5), # Corrected calculation
+                max_length=int(input_ids.shape[1] * 1.5),
                 num_beams=5,
                 early_stopping=True,
                 temperature=1.2,
                 top_k=50
             )
-            # CORRECTED: Decoding the first sequence in the output tensor
             humanized_text = self.humanizer_tokenizer.decode(outputs[0], skip_special_tokens=True)
             return humanized_text
         except Exception as e:
@@ -263,7 +257,6 @@ class HumanizationPipelineV3:
         )
         
         try:
-            # Using a single item list for the scorer
             perplexity = self.perplexity_scorer.get_perplexity([text.strip()])
         except Exception as e:
             logger.warning(f"Error calculating perplexity: {e}")
