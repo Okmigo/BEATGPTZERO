@@ -32,7 +32,7 @@ RUN adduser --system --group --no-create-home appuser
 # Install packages from wheels as root
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
 
-# Download and cache models as root, placing them in a user-accessible location
+# CORRECTED: Download all required NLTK models (punkt and wordnet)
 RUN python -m spacy download en_core_web_lg && \
     python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('wordnet', quiet=True)"
 
