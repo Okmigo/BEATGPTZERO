@@ -5,16 +5,10 @@ gunicorn
 
 # NLP and Machine Learning
 spacy
-# Note: The spacy model 'en_core_web_lg' is downloaded in the Dockerfile
 transformers
-torch
-# lmppl for perplexity calculation
 lmppl
-# numpy for statistical calculations
 numpy
-# nltk for linguistic resources (tokenization, WordNet)
 nltk
-# textstat for readability metrics
 textstat
 
 # Infrastructure and utilities
