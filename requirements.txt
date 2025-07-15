@@ -3,13 +3,6 @@ fastapi
 uvicorn[standard]
 gunicorn
 
-# NLP and Machine Learning
-spacy
+# Core NLP library
 transformers
-lmppl
-numpy
-nltk
-textstat
-
-# Infrastructure and utilities
-python-dotenv
+sentencepiece
