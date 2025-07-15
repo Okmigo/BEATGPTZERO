@@ -1,9 +1,9 @@
-# Core web framework
-fastapi
-uvicorn[standard]
-gunicorn
-
-# Core NLP library
-transformers
-sentencepiece
-protobuf
+flask==3.0.2
+gunicorn==22.0.0
+transformers==4.41.1
+torch>=2.2.0
+sentence-transformers==2.7.0
+nltk==3.8.1
+scikit-learn==1.5.0
+ujson==5.10.0
+tqdm==4.66.4
