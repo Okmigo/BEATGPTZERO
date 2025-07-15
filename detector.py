@@ -1,16 +1,19 @@
 import torch
+import config
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from torch.nn.functional import softmax
-from config import DETECTOR_THRESHOLD, CUDA_DEVICE
 
-DEVICE = f"cuda:{CUDA_DEVICE}" if CUDA_DEVICE >= 0 and torch.cuda.is_available() else "cpu"
-DETECT_MODEL = "openai-community/roberta-base-openai-detector"  # free GPT-2 detector[9]
-_dtok = AutoTokenizer.from_pretrained(DETECT_MODEL)
-_dmodel = AutoModelForSequenceClassification.from_pretrained(DETECT_MODEL).to(DEVICE)
+# Load the RoBERTa GPT-2 output detector
+detector_tokenizer = AutoTokenizer.from_pretrained(config.DETECTOR_MODEL)
+detector_model = AutoModelForSequenceClassification.from_pretrained(config.DETECTOR_MODEL)
 
-def passes_detector(text: str) -> (bool, float):
-    tokens = _dtok(text, return_tensors="pt", truncation=True, max_length=512).to(DEVICE)
-    logits  = _dmodel(**tokens).logits
-    probs   = softmax(logits, dim=-1).squeeze()
-    ai_prob = probs[1].item()  # label index 1 = “Fake/AI-generated”
-    return ai_prob <= DETECTOR_THRESHOLD, ai_prob
+def detect_text(text):
+    """
+    Returns a dict with probabilities {'gpt2_score': float, 'human_score': float}.
+    GPT2_score ~ probability the text is GPT-generated; human_score ~ probability it's human-written.
+    """
+    inputs = detector_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = detector_model(**inputs)
+        probs = torch.softmax(outputs.logits, dim=1)[0].tolist()
+    # By convention, index 0 = GPT-2, index 1 = human
+    return {"gpt2_score": probs[0], "human_score": probs[1]}
