@@ -57,8 +57,6 @@ class ModelManager:
     """
     _instance = None
     _lock = threading.Lock()
-    
-    # Readiness flag for Cloud Run health checks
     is_ready: bool = False
 
     def __new__(cls):
@@ -105,7 +103,6 @@ class ModelManager:
                     device=self.device
                 )
                 
-                # Set the readiness flag ONLY after all models are loaded
                 self.is_ready = True
                 end_time = time.time()
                 logger.info(f"All models and pipeline loaded successfully in {end_time - start_time:.2f} seconds. Service is ready.")
@@ -113,9 +110,6 @@ class ModelManager:
             except Exception as e:
                 logger.error(f"FATAL: Model loading failed: {e}", exc_info=True)
                 self.is_ready = False
-                # CORRECTED: Do not raise the exception here. Raising it would kill the
-                # background thread silently, leaving the app in a permanent "loading" state.
-                # The error is logged, which is sufficient for debugging.
 
     def get_pipeline(self):
         if not self.is_ready or not self.pipeline:
@@ -136,14 +130,12 @@ class HumanizationPipelineV3:
         self.humanizer_model = humanizer_model
         self.device = device
 
-        # --- Target Stylometric Profile for Evasion ---
         self.TARGET_TTR = 0.55
         self.TARGET_SENT_LEN_STD = 7.0
         self.TARGET_READABILITY_MIN = 9.0
         self.TARGET_READABILITY_MAX = 14.0
 
     def _analyze_stylometry(self, text: str) -> StylometricProfile:
-        """Calculates the stylometric profile of a text."""
         doc = self.nlp(text)
         tokens = [token.text.lower() for token in doc if token.is_alpha]
         sents = list(doc.sents)
@@ -164,7 +156,6 @@ class HumanizationPipelineV3:
         )
 
     def _targeted_lexical_perturbation(self, text: str, profile: StylometricProfile) -> str:
-        """Intelligently replaces words to increase vocabulary richness (TTR)."""
         ttr_gap = self.TARGET_TTR - profile.ttr
         replacement_rate = max(0.05, min(0.25, ttr_gap * 0.5))
         
@@ -195,7 +186,6 @@ class HumanizationPipelineV3:
         return "".join(new_tokens)
 
     def _targeted_structural_perturbation(self, text: str, profile: StylometricProfile) -> str:
-        """Intelligently merges/splits sentences to increase sentence length variation."""
         if profile.sentence_length_std >= self.TARGET_SENT_LEN_STD:
             return text
 
@@ -229,7 +219,6 @@ class HumanizationPipelineV3:
         return text
 
     def _stylistic_transfer(self, text: str) -> str:
-        """Uses a specialized model to polish the text and apply a human-like style."""
         try:
             input_ids = self.humanizer_tokenizer(text, return_tensors="pt", max_length=512, truncation=True).input_ids.to(self.device)
             outputs = self.humanizer_model.generate(
@@ -247,7 +236,6 @@ class HumanizationPipelineV3:
             return text
 
     def _validate_output(self, text: str, profile: StylometricProfile) -> Tuple[float, float, bool]:
-        """Calculates final metrics and validates against targets."""
         burstiness = profile.sentence_length_std
         
         is_humanized = (
@@ -257,7 +245,7 @@ class HumanizationPipelineV3:
         )
         
         try:
-            perplexity = self.perplexity_scorer.get_perplexity([text.strip()])
+            perplexity = self.perplexity_scorer.get_perplexity([text.strip()]) if text.strip() else 0.0
         except Exception as e:
             logger.warning(f"Error calculating perplexity: {e}")
             perplexity = 0.0
@@ -265,7 +253,6 @@ class HumanizationPipelineV3:
         return perplexity, burstiness, is_humanized
 
     def run(self, text: str) -> Tuple:
-        """Executes the full V3 pipeline."""
         original_profile = self._analyze_stylometry(text)
         
         perturbed_text = text
