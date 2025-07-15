@@ -1,48 +1,39 @@
 # Dockerfile
 
-# --- Build Stage ---
-FROM python:3.10.13-slim-bookworm as builder
+# Use an official PyTorch image for stability and compatibility
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
 
+# Set the working directory
 WORKDIR /app
 
+# Set environment variables to prevent Python from writing .pyc files
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN pip install --upgrade pip
+# Upgrade pip
+RUN python3 -m pip install --upgrade pip
 
-# Copy only requirements first for caching
+# Copy the requirements file into the container
 COPY requirements.txt .
 
-# Build the wheels as root
-RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
+# Install the Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Create a non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
 
-# --- Final Stage ---
-FROM python:3.10.13-slim-bookworm
+# Download and cache the NLP models as root before we switch user
+RUN python3 -m spacy download en_core_web_lg && \
+    python3 -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('wordnet', quiet=True)"
 
-WORKDIR /app
-
-# Copy assets from the builder stage as root
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
-
-# Create the non-root user
-RUN adduser --system --group --no-create-home appuser
-
-# Install packages from wheels as root
-RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
-
-# CORRECTED: Download all required NLTK models (punkt and wordnet)
-RUN python -m spacy download en_core_web_lg && \
-    python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('wordnet', quiet=True)"
-
-# Copy the application source code and change ownership to the non-root user
-COPY --chown=appuser:appuser . .
-
-# NOW, switch to the non-root user for security
+# Switch to the non-root user
 USER appuser
 
+# Copy the rest of the application source code into the container
+COPY --chown=appuser:appuser . .
+
+# Expose the port the app will run on
 EXPOSE 8080
 
-# Run the application as the non-root user
+# Command to run the application using Gunicorn
 CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8080", "app:app"]
