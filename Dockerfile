@@ -1,7 +1,7 @@
 # Dockerfile
 
-# Use an official PyTorch image for stability and compatibility
-FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+# CORRECTED: Use a newer PyTorch image with torch > v2.6 to resolve the security vulnerability
+FROM pytorch/pytorch:2.6.0-cuda12.1-cudnn8-runtime
 
 # Set the working directory
 WORKDIR /app
@@ -9,7 +9,7 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV TRANSFORMERS_CACHE=/app/models
+ENV HF_HOME=/app/models
 
 # Upgrade pip
 RUN python3 -m pip install --upgrade pip
@@ -20,16 +20,16 @@ COPY requirements.txt .
 # Install the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# --- Pre-download the model ---
-# This is a critical optimization. It downloads the model files
-# into the image itself, so there is no "loading" delay at startup.
+# Create and switch to a non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
+
+# Pre-download the model as root
 RUN python3 -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
                 model_name = 'tuner007/pegasus_paraphrase'; \
                 AutoTokenizer.from_pretrained(model_name, cache_dir='/app/models'); \
                 AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir='/app/models')"
 
-# Create and switch to a non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser
+# Switch to the non-root user
 USER appuser
 
 # Copy the application source code into the container
