@@ -6,3 +6,4 @@ gunicorn
 # Core NLP library
 transformers
 sentencepiece
+protobuf
