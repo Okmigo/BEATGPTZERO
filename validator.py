@@ -1,11 +1,17 @@
-import torch
-from sentence_transformers import SentenceTransformer, util
-from config import SEMANTIC_THRESHOLD, CUDA_DEVICE
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+import config
 
-DEVICE = f"cuda:{CUDA_DEVICE}" if CUDA_DEVICE >= 0 and torch.cuda.is_available() else "cpu"
-_embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").to(DEVICE)
+# Load a semantic similarity model
+semantic_model = SentenceTransformer(config.SEMANTIC_MODEL)
 
-def is_semantically_close(orig: str, candidate: str) -> bool:
-    emb1, emb2 = _embedder.encode([orig, candidate], convert_to_tensor=True, device=DEVICE)
-    score = util.cos_sim(emb1, emb2).item()
-    return score >= SEMANTIC_THRESHOLD, score
+def semantic_similarity(text1, text2):
+    """
+    Compute cosine similarity between embeddings of text1 and text2.
+    """
+    # For long texts, you might split into chunks and average; here we do whole-text embedding.
+    emb1 = semantic_model.encode(text1, convert_to_tensor=False)
+    emb2 = semantic_model.encode(text2, convert_to_tensor=False)
+    # Reshape for cosine_similarity
+    sim = cosine_similarity([emb1], [emb2])[0][0]
+    return float(sim)
