@@ -6,31 +6,34 @@ FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
 # Set the working directory
 WORKDIR /app
 
-# Set environment variables to prevent Python from writing .pyc files
+# Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV TRANSFORMERS_CACHE=/app/models
 
 # Upgrade pip
 RUN python3 -m pip install --upgrade pip
 
-# Copy the requirements file into the container
+# Copy requirements file
 COPY requirements.txt .
 
 # Install the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create a non-root user for security
+# --- Pre-download the model ---
+# This is a critical optimization. It downloads the model files
+# into the image itself, so there is no "loading" delay at startup.
+RUN python3 -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; \
+                model_name = 'tuner007/pegasus_paraphrase'; \
+                AutoTokenizer.from_pretrained(model_name, cache_dir='/app/models'); \
+                AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir='/app/models')"
+
+# Create and switch to a non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
-
-# Download and cache the NLP models as root before we switch user
-RUN python3 -m spacy download en_core_web_lg && \
-    python3 -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('wordnet', quiet=True)"
-
-# Switch to the non-root user
 USER appuser
 
-# Copy the rest of the application source code into the container
-COPY --chown=appuser:appuser . .
+# Copy the application source code into the container
+COPY --chown=appuser:appuser app.py .
 
 # Expose the port the app will run on
 EXPOSE 8080
