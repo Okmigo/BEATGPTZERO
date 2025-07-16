@@ -1,4 +1,3 @@
-# app.py: Flask API for rewriting AI-generated text
 from flask import Flask, request, jsonify
 import humanizer
 import detector
@@ -12,7 +11,6 @@ def rewrite_endpoint():
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    # Rewrite the text and compute AI-likeness scores
     rewritten = humanizer.rewrite_text(text)
     new_score = detector.score_ai(rewritten)
     orig_score = detector.score_ai(text)
@@ -24,6 +22,10 @@ def rewrite_endpoint():
         "rewritten_ai_score": new_score
     })
 
+# 🔧 ADD THIS ROUTE TO PASS CLOUD RUN HEALTH CHECK
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    return "ok", 200
+
 if __name__ == "__main__":
-    # Run the app (Cloud Run will use gunicorn in production)
     app.run(host="0.0.0.0", port=8080)
