@@ -28,8 +28,15 @@ COPY --from=builder /wheels /wheels
 COPY --from=builder /app/requirements.txt .
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
 
+# Set HuggingFace cache directory
+ENV TRANSFORMERS_CACHE=/app/cache
+RUN mkdir -p /app/cache
+
 # Pre-download NLTK corpora
 RUN python -c "import nltk; nltk.download('punkt'); nltk.download('wordnet')"
+
+# ⚠️ Replace 't5-base' with your actual model from config.PARAPHRASER_MODEL
+RUN python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('t5-base')"
 
 # Copy app code
 COPY . .
