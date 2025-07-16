@@ -35,8 +35,17 @@ RUN mkdir -p /app/cache
 # Pre-download NLTK corpora
 RUN python -c "import nltk; nltk.download('punkt'); nltk.download('wordnet')"
 
-# ⚠️ Replace 't5-base' with your actual model from config.PARAPHRASER_MODEL
-RUN python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('t5-base')"
+# Pre-download paraphraser model
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; AutoTokenizer.from_pretrained('mrm8488/t5-small-finetuned-quora-for-paraphrasing'); AutoModelForSeq2SeqLM.from_pretrained('mrm8488/t5-small-finetuned-quora-for-paraphrasing')"
+
+# Pre-download GPT-2 model for perplexity scoring
+RUN python -c "from transformers import GPT2TokenizerFast, GPT2LMHeadModel; GPT2TokenizerFast.from_pretrained('gpt2'); GPT2LMHeadModel.from_pretrained('gpt2')"
+
+# Pre-download RoBERTa detector model
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; AutoTokenizer.from_pretrained('openai-community/roberta-base-openai-detector'); AutoModelForSequenceClassification.from_pretrained('openai-community/roberta-base-openai-detector')"
+
+# Pre-download SentenceTransformer model
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-MiniLM-L6-v2')"
 
 # Copy app code
 COPY . .
