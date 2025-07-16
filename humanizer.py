@@ -102,3 +102,19 @@ def rewrite(text: str) -> str:
 
     rewritten_text = " ".join(rewritten)
     return rewritten_text
+    def humanize_text(text: str) -> dict:
+    original_profile = stylometric_profile(text)
+    rewritten = rewrite(text)
+    final_profile = stylometric_profile(rewritten)
+    ai_score = detect_ai(rewritten)
+
+    return {
+        "original_text": text,
+        "humanized_text": rewritten,
+        "original_profile": original_profile,
+        "final_profile": final_profile,
+        "is_humanized": ai_score < 30,
+        "perplexity": None,  # Optional: add if you calculate it
+        "burstiness": final_profile["sentence_length_std"],
+    }
+
