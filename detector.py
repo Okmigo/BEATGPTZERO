@@ -1,27 +1,18 @@
-# detector.py: Module to score text on how likely it is AI-generated
+import torch
 import config
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-# Load the RoBERTa-based AI detector (fine-tuned on GPT-2 output).
-_detector = pipeline(
-    "text-classification",
-    model=config.DETECTOR_MODEL,
-    tokenizer=config.DETECTOR_MODEL
-)
+# Load the RoBERTa GPT-2 output detector
+detector_tokenizer = AutoTokenizer.from_pretrained(config.DETECTOR_MODEL)
+detector_model = AutoModelForSequenceClassification.from_pretrained(config.DETECTOR_MODEL)
 
-def score_ai(text):
+def detect_text(text):
     """
-    Returns the estimated AI-generation probability (0-100) for the given text.
-    Uses a classifier that labels text as 'Real' (human) or 'Fake' (AI).
-    We interpret 'Real' score as human-likelihood.
+    Returns: {'gpt2_score': float, 'human_score': float}.
     """
-    # Classify the text (truncate if too long to fit model)
-    res = _detector(text, truncation=True, max_length=config.MAX_LENGTH)[0]
-    label = res['label'].lower()
-    score = res['score']
-    # If label is 'real', then AI-likelihood = (1 - score); if 'fake', = score
-    if label == "real":
-        ai_prob = (1.0 - score) * 100.0
-    else:
-        ai_prob = score * 100.0
-    return ai_prob
+    inputs = detector_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = detector_model(**inputs)
+        probs = torch.softmax(outputs.logits, dim=1)[0].tolist()
+    # Index 0 = GPT-2 (AI), index 1 = human
+    return {"gpt2_score": probs[0], "human_score": probs[1]}
