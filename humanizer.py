@@ -1,108 +1,103 @@
 import random
 import re
 import nltk
-import torch
-import numpy as np
-from typing import List
-from transformers import (
-    AutoTokenizer, AutoModelForSequenceClassification,
-    T5ForConditionalGeneration, T5Tokenizer
-)
-from sentence_transformers import SentenceTransformer
-from sklearn.feature_extraction.text import CountVectorizer
-from nltk.tokenize import sent_tokenize, word_tokenize
-from nltk.corpus import wordnet
-from tqdm import tqdm
+import textwrap
+from nltk.corpus import wordnet as wn
+from nltk.tokenize import sent_tokenize
+from detector import detect_ai
+from validator import stylometric_profile
 
-# Ensure necessary NLTK resources are downloaded
-nltk.download("punkt", quiet=True)
-nltk.download("wordnet", quiet=True)
+nltk.download('punkt')
+nltk.download('wordnet')
 
-# Load models and tokenizers
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# --- Helper functions ---
 
-# Paraphraser
-paraphrase_model = T5ForConditionalGeneration.from_pretrained("Vamsi/T5_Paraphrase_Paws").to(device)
-paraphrase_tokenizer = T5Tokenizer.from_pretrained("Vamsi/T5_Paraphrase_Paws")
+def synonym_swap(word):
+    synsets = wn.synsets(word)
+    synonyms = [lemma.name().replace("_", " ") for syn in synsets for lemma in syn.lemmas()
+                if lemma.name().lower() != word.lower()]
+    return random.choice(synonyms) if synonyms else word
 
-# Sentence embedder
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# AI detector (Roberta-based)
-detector_tokenizer = AutoTokenizer.from_pretrained("openai-community/roberta-base-openai-detector")
-detector_model = AutoModelForSequenceClassification.from_pretrained("openai-community/roberta-base-openai-detector").to(device)
-
-def get_synonyms(word):
-    synonyms = set()
-    for syn in wordnet.synsets(word):
-        for lemma in syn.lemmas():
-            if "_" not in lemma.name():
-                synonyms.add(lemma.name().lower())
-    return list(synonyms)
-
-def stylometric_profile(text: str) -> dict:
+def chunk_text(text, max_len=180):
     sentences = sent_tokenize(text)
-    words = word_tokenize(text)
-    if not words:
-        return {"ttr": 0, "sentence_length_mean": 0, "sentence_length_std": 0, "readability_flesch_kincaid": 0}
-    sentence_lengths = [len(word_tokenize(s)) for s in sentences]
-    ttr = len(set(words)) / len(words)
-    mean_len = np.mean(sentence_lengths)
-    std_len = np.std(sentence_lengths)
-    readability = 0.39 * mean_len + 11.8 * (len(words) / len(sentences)) - 15.59
-    return {
-        "ttr": round(ttr, 4),
-        "sentence_length_mean": round(mean_len, 2),
-        "sentence_length_std": round(std_len, 2),
-        "readability_flesch_kincaid": round(readability, 2)
-    }
+    chunks, chunk = [], []
+    curr_len = 0
+    for sentence in sentences:
+        if curr_len + len(sentence.split()) <= max_len:
+            chunk.append(sentence)
+            curr_len += len(sentence.split())
+        else:
+            chunks.append(" ".join(chunk))
+            chunk = [sentence]
+            curr_len = len(sentence.split())
+    if chunk:
+        chunks.append(" ".join(chunk))
+    return chunks
 
-def embed(text: str) -> np.ndarray:
-    return embedding_model.encode([text], convert_to_numpy=True)[0]
+def human_variation(sentence: str) -> str:
+    sentence = re.sub(r'\b(it is|it’s|there is|there are|this is)\b', '', sentence, flags=re.I)
+    sentence = sentence.replace("—", "-").replace("..", ".")
+    sentence = re.sub(r'\butilize\b', 'use', sentence)
+    return sentence
 
-def cosine_similarity(vec1, vec2) -> float:
-    return float(np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2) + 1e-8))
+def restructure_sentence(sentence: str) -> str:
+    # Occasionally shuffle clauses if safe
+    parts = re.split(r'[,;:]-?', sentence)
+    if len(parts) > 1 and random.random() < 0.4:
+        random.shuffle(parts)
+    return ', '.join(part.strip() for part in parts)
 
-def detect_ai(text: str) -> float:
-    inputs = detector_tokenizer(text, return_tensors="pt", truncation=True, padding=True).to(device)
-    with torch.no_grad():
-        outputs = detector_model(**inputs)
-    scores = torch.softmax(outputs.logits, dim=1)
-    ai_score = float(scores[0][1])
-    return round(ai_score * 100, 2)
+def enrich_with_literary_tone(sentence: str) -> str:
+    # Introduce human-style language unpredictability
+    openings = [
+        "Let’s consider this:",
+        "In many ways,",
+        "Oddly enough,",
+        "Take this for example—",
+        "To put it plainly,",
+        "At its core,"
+    ]
+    if random.random() < 0.3:
+        sentence = random.choice(openings) + " " + sentence
+    if random.random() < 0.3:
+        sentence = sentence.replace("and", random.choice(["and also", "and even", "as well as"]))
+    return sentence
 
-def paraphrase_sentence(sentence: str, num_return_sequences=5) -> List[str]:
-    input_text = f"paraphrase: {sentence} </s>"
-    input_ids = paraphrase_tokenizer.encode(input_text, return_tensors="pt", truncation=True).to(device)
-    outputs = paraphrase_model.generate(
-        input_ids,
-        max_length=256,
-        num_beams=10,
-        num_return_sequences=num_return_sequences,
-        temperature=1.0,
-        top_k=50,
-        top_p=0.95,
-        do_sample=True
-    )
-    return list({paraphrase_tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=True) for g in outputs})
+def stylize_sentence(sentence: str, user_tone: str) -> str:
+    sentence = human_variation(sentence)
+    sentence = restructure_sentence(sentence)
+    sentence = enrich_with_literary_tone(sentence)
+    if user_tone == "academic":
+        sentence = sentence.replace("kind of", "somewhat").replace("a lot of", "numerous")
+    return sentence
+
+def estimate_tone(text: str) -> str:
+    formal_markers = ["therefore", "however", "thus", "notably", "significant", "framework", "systemic"]
+    informal_markers = ["like", "kind of", "a lot", "really", "basically", "actually"]
+    f = sum(text.count(w) for w in formal_markers)
+    i = sum(text.count(w) for w in informal_markers)
+    return "academic" if f >= i else "conversational"
+
+# --- Rewrite logic ---
 
 def rewrite(text: str) -> str:
-    original_embedding = embed(text)
-    sentences = sent_tokenize(text)
-    rewritten = []
+    tone = estimate_tone(text)
+    chunks = chunk_text(text)
+    rewritten_chunks = []
 
-    for sentence in sentences:
-        paraphrases = paraphrase_sentence(sentence, num_return_sequences=6)
-        filtered = [s for s in paraphrases if s.lower() != sentence.lower()]
-        if not filtered:
-            rewritten.append(sentence)
-            continue
-        best = max(filtered, key=lambda s: cosine_similarity(embed(s), original_embedding))
-        rewritten.append(best)
+    for chunk in chunks:
+        sentences = sent_tokenize(chunk)
+        rewritten_sentences = []
+        for s in sentences:
+            styled = stylize_sentence(s, user_tone=tone)
+            rewritten_sentences.append(styled)
+        rewritten_chunks.append(" ".join(rewritten_sentences))
 
-    rewritten_text = " ".join(rewritten)
-    return rewritten_text
-    def humanize_text(text: str) -> dict:
+    return "\n\n".join(rewritten_chunks)
+
+# --- Entry point for the API ---
+
+def humanize_text(text: str) -> dict:
     original_profile = stylometric_profile(text)
     rewritten = rewrite(text)
     final_profile = stylometric_profile(rewritten)
@@ -114,7 +109,6 @@ def rewrite(text: str) -> str:
         "original_profile": original_profile,
         "final_profile": final_profile,
         "is_humanized": ai_score < 30,
-        "perplexity": None,  # Optional: add if you calculate it
+        "perplexity": None,
         "burstiness": final_profile["sentence_length_std"],
     }
-
