@@ -1,18 +1,28 @@
-import torch
-import config
+# detector.py
+
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
 
-# Load the RoBERTa GPT-2 output detector
-detector_tokenizer = AutoTokenizer.from_pretrained(config.DETECTOR_MODEL)
-detector_model = AutoModelForSequenceClassification.from_pretrained(config.DETECTOR_MODEL)
+# Load the OpenAI-style RoBERTa detector model
+model_name = "openai-community/roberta-base-openai-detector"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
-def detect_text(text):
+def detect(text: str) -> float:
     """
-    Returns: {'gpt2_score': float, 'human_score': float}.
+    Returns a confidence score between 0 and 1 indicating the likelihood the text is AI-generated.
     """
-    inputs = detector_tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
     with torch.no_grad():
-        outputs = detector_model(**inputs)
-        probs = torch.softmax(outputs.logits, dim=1)[0].tolist()
-    # Index 0 = GPT-2 (AI), index 1 = human
-    return {"gpt2_score": probs[0], "human_score": probs[1]}
+        outputs = model(**inputs)
+    logits = outputs.logits
+    probs = torch.softmax(logits, dim=1)
+    ai_prob = probs[0][1].item()  # Index 1 is AI class
+    return ai_prob
+
+def detect_ai(text: str) -> float:
+    """
+    Proxy function for backward compatibility.
+    Returns the AI detection score for the given text.
+    """
+    return detect(text)
