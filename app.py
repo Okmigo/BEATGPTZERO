@@ -14,7 +14,7 @@ app = Flask(__name__)
 models_loaded = False
 
 def async_model_loader():
-    """Load all ML models in the background thread to avoid blocking Cloud Run startup probe."""
+    """Load all ML models in a background thread to avoid blocking Cloud Run startup."""
     global models_loaded
     try:
         logger.info("Background loading models...")
@@ -27,12 +27,15 @@ def async_model_loader():
         logger.exception(f"Model loading failed: {e}")
         models_loaded = False
 
-# Start background thread
-threading.Thread(target=async_model_loader).start()
+# Start background thread immediately
+threading.Thread(target=async_model_loader, daemon=True).start()
 
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check endpoint used by Cloud Run."""
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """
+    Cloud Run startup probe target.
+    Must return 200 only when the app is ready.
+    """
     if models_loaded:
         return jsonify({"status": "ready"}), 200
     else:
