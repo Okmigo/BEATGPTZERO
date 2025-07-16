@@ -1,91 +1,63 @@
 import random
 import re
-import nltk
-from nltk.tokenize import sent_tokenize, word_tokenize
-from nltk.corpus import wordnet
-from typing import List
-nltk.download('averaged_perceptron_tagger')
+from nltk import sent_tokenize
+from sentence_transformers import SentenceTransformer
+from transformers import T5ForConditionalGeneration, T5Tokenizer
 
-# Helper to introduce contractions
-def apply_contractions(text):
-    contractions = {
-        "do not": "don't", "does not": "doesn't", "did not": "didn't",
-        "is not": "isn't", "are not": "aren't", "was not": "wasn't",
-        "were not": "weren't", "has not": "hasn't", "have not": "haven't",
-        "had not": "hadn't", "will not": "won't", "would not": "wouldn't",
-        "can not": "can't", "could not": "couldn't", "should not": "shouldn't",
-        "might not": "mightn't", "must not": "mustn't"
-    }
-    for k, v in contractions.items():
-        text = re.sub(r'\b' + k + r'\b', v, text)
-    return text
+# Load models once
+semantic_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+t5_model = T5ForConditionalGeneration.from_pretrained("google/flan-t5-base")
+t5_tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-base")
 
-# Helper to insert human-like interjections and informal phrases
-def humanize_phrasing(sentence):
-    openers = ["To be honest,", "Well,", "You know,", "Frankly,", "Let's be real,"]
-    closers = ["if you ask me.", "and that’s saying something.", "no joke.", "just so you know.", "right?"]
-    
-    if random.random() < 0.2:
-        sentence = random.choice(openers) + " " + sentence
-    if random.random() < 0.2:
-        sentence += " " + random.choice(closers)
-    return sentence
 
-# Shuffle middle sentences to simulate burstiness
-def rearrange_sentences(sentences: List[str]) -> List[str]:
-    if len(sentences) <= 3:
-        return sentences
-    intro = sentences[0]
-    outro = sentences[-1]
-    middle = sentences[1:-1]
-    random.shuffle(middle)
-    return [intro] + middle + [outro]
-
-# Add rhetorical questions, variation, and break formality
-def soften_and_variabilize(text):
-    sentences = sent_tokenize(text)
-    rewritten = []
-    
-    for s in sentences:
-        if random.random() < 0.3:
-            if s.strip().endswith("."):
-                s = s.strip()[:-1] + "?"
-        s = humanize_phrasing(s)
-        rewritten.append(s)
-    
-    return " ".join(rewritten)
-
-# Word-level tweaking: replace synonyms randomly (for content words only)
-def inject_synonyms(text):
-    tokens = word_tokenize(text)
-    tagged = nltk.pos_tag(tokens)
-    new_tokens = []
-
-    for word, tag in tagged:
-        if tag.startswith("NN") or tag.startswith("VB") or tag.startswith("JJ"):
-            if random.random() < 0.15:
-                syns = wordnet.synsets(word)
-                lemmas = [l.name().replace('_', ' ') for s in syns for l in s.lemmas()]
-                clean_lemmas = [w for w in lemmas if w.lower() != word.lower() and w.isalpha()]
-                if clean_lemmas:
-                    word = random.choice(clean_lemmas)
-        new_tokens.append(word)
-    
-    return " ".join(new_tokens)
-
-# Final rewrite function
 def rewrite(text: str) -> str:
     sentences = sent_tokenize(text)
-    
-    # Rearrange mid-sentences
-    shuffled = rearrange_sentences(sentences)
-    chunked_text = " ".join(shuffled)
+    rewritten_sentences = []
 
-    # Inject rhetorical variation
-    bursty = soften_and_variabilize(chunked_text)
+    for i, sentence in enumerate(sentences):
+        # Step 1: Prompt diversity injection
+        prompt_variants = [
+            f"Rewrite the sentence to reflect a human academic writing style without sounding robotic: {sentence}",
+            f"Reword this with natural variation while preserving its academic tone and core meaning: {sentence}",
+            f"Transform this sentence into one that sounds like it was written by a human academic: {sentence}",
+            f"Recast this sentence using subtle human expression and rhythm: {sentence}",
+            f"Reshape the sentence to avoid formulaic AI tone: {sentence}"
+        ]
+        prompt = random.choice(prompt_variants)
 
-    # Word-level tweaks (with synonyms and contractions)
-    softened = inject_synonyms(bursty)
-    final = apply_contractions(softened)
+        inputs = t5_tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+        outputs = t5_model.generate(
+            inputs.input_ids,
+            max_length=256,
+            temperature=random.uniform(0.9, 1.3),  # Inject non-determinism
+            top_p=0.95,
+            do_sample=True
+        )
+        rewritten = t5_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    return final
+        # Step 2: Inject mild syntax shifts
+        rewritten = tweak_syntax_subtly(rewritten)
+
+        rewritten_sentences.append(rewritten)
+
+    final_text = " ".join(rewritten_sentences)
+    return final_text
+
+
+def tweak_syntax_subtly(sentence: str) -> str:
+    # Insert mid-sentence clauses or shuffle minor punctuation for human idiosyncrasy
+    tweaks = [
+        lambda s: re.sub(r"(\b\w{5,}\b)", r"\1,", s, count=1),  # Inject a comma
+        lambda s: re.sub(r"([a-zA-Z]{4,})\.", r"\1,", s),       # Replace period with comma if stylistically safe
+        lambda s: s.replace(" and ", ", and "),                # More organic list patterns
+        lambda s: s.replace(" but ", ", but "),                # Softened transitions
+    ]
+    random.shuffle(tweaks)
+    for tweak in tweaks:
+        try:
+            s = tweak(sentence)
+            if len(s.split()) > 5:
+                return s
+        except:
+            continue
+    return sentence
