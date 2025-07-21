@@ -4,13 +4,14 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Copy app files
+# Copy everything
 COPY . .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Set env vars from .env if needed (Cloud Run can do this via dashboard too)
+# Expose port for Cloud Run
+EXPOSE 8080
 
-# Expose port & run
+# Run the app using uvicorn on correct port
 CMD ["uvicorn", "main:app", "--host=0.0.0.0", "--port=8080"]
