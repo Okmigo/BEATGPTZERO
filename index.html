@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BeatGPTZero</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      margin: 0;
+      padding: 2rem;
+      max-width: 800px;
+      margin: auto;
+    }
+    textarea {
+      width: 100%;
+      height: 120px;
+      margin-bottom: 1rem;
+    }
+    button {
+      margin-right: 1rem;
+      padding: 0.5rem 1rem;
+    }
+    .result-box {
+      background: white;
+      padding: 1rem;
+      border-radius: 6px;
+      margin-top: 1rem;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🧠 BeatGPTZero</h1>
+  <p>Paste your AI-generated text below:</p>
+
+  <textarea id="inputText" placeholder="Paste AI-generated text here..."></textarea>
+
+  <div>
+    <button onclick="inferPrompt()">Step 1: Infer Prompt</button>
+    <button onclick="generateVariants()">Step 2: Generate Variants</button>
+    <button onclick="humanizeFinal()">Step 3: Humanize Final</button>
+  </div>
+
+  <div class="result-box" id="inferredPromptBox"></div>
+  <div class="result-box" id="variantsBox"></div>
+  <div class="result-box" id="humanizedBox"></div>
+
+  <script>
+    const apiBase = "https://beatgptzero-api-21044677645.us-east1.run.app";
+
+    let lastPrompt = "";
+    let lastVariants = [];
+
+    async function inferPrompt() {
+      const text = document.getElementById("inputText").value;
+      const res = await fetch(`${apiBase}/infer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      lastPrompt = data.inferred_prompt || "";
+      document.getElementById("inferredPromptBox").innerText = "🧩 Inferred Prompt:\n" + lastPrompt;
+    }
+
+    async function generateVariants() {
+      if (!lastPrompt) return alert("Please infer the prompt first.");
+      const text = document.getElementById("inputText").value;
+      const res = await fetch(`${apiBase}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, prompt: lastPrompt })
+      });
+      const data = await res.json();
+      lastVariants = data.variants || [];
+      document.getElementById("variantsBox").innerText = "🔁 Variants:\n\n" + lastVariants.join("\n\n---\n\n");
+    }
+
+    async function humanizeFinal() {
+      if (lastVariants.length === 0) return alert("Please generate variants first.");
+      const text = document.getElementById("inputText").value;
+      const res = await fetch(`${apiBase}/humanize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, variants: lastVariants })
+      });
+      const data = await res.json();
+      document.getElementById("humanizedBox").innerText = "🎯 Final Humanized Text:\n\n" + data.final_humanized_text;
+    }
+  </script>
+</body>
+</html>
