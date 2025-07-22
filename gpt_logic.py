@@ -1,21 +1,19 @@
 import google.generativeai as genai
 
-# Configure with your Makersuite API key
 genai.configure(api_key="AIzaSyB3bbBOkjMH87QSfZx930etQ7DaC30VKdY")
 
-# Use the supported model from AI Studio (Makersuite)
-model = genai.GenerativeModel("models/text-bison-001")
+model = genai.GenerativeModel("gemini-1.5-flash")  # This works in Google AI Studio
 
-# Helper to handle exceptions cleanly
 def safe_generate(prompt: str) -> str:
     try:
+        print("🧠 Prompt to Gemini:")
+        print(prompt)
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
         print("❌ Gemini Error:", str(e))
         return "[ERROR] Gemini failed"
 
-# Step 1: Infer Prompt
 def infer_prompt(text: str) -> str:
     return safe_generate(
         f"""You are a reverse prompt analyzer.
@@ -27,11 +25,10 @@ Text:
 """
     )
 
-# Step 2: Generate 15 Variations Matching Prompt
 def generate_variants(prompt: str, original_text: str) -> list[str]:
     outputs = []
     for i in range(15):
-        variation = safe_generate(
+        output = safe_generate(
             f"""Prompt: {prompt}
 
 Generate a humanlike response matching the tone and length of the following:
@@ -40,10 +37,9 @@ Generate a humanlike response matching the tone and length of the following:
 Avoid repetition and obvious AI writing patterns.
 """
         )
-        outputs.append(variation)
+        outputs.append(output)
     return outputs
 
-# Step 3: Rewrite to Humanize Based on Variants
 def humanize_text(original_text: str, variants: list[str]) -> str:
     joined_variants = "\n\n---\n\n".join(variants)
     return safe_generate(
